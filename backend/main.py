@@ -8,7 +8,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 from pathlib import Path
@@ -58,6 +58,9 @@ SCANNER_RETRY_BASE_MS = max(100, int(os.getenv("SCANNER_RETRY_BASE_MS", "500")))
 CAPABILITY_CACHE_SECONDS = int(os.getenv("CAPABILITY_CACHE_SECONDS", "10"))
 SCANNER_SYMBOLS = os.getenv("SCANNER_SYMBOLS", "")
 BAR_CACHE_TTL_SECONDS = max(1, int(os.getenv("BAR_CACHE_TTL_SECONDS", "30")))
+BAR_CACHE_OPEN_SESSION_TTL_SECONDS = max(1, int(os.getenv("BAR_CACHE_OPEN_SESSION_TTL_SECONDS", str(BAR_CACHE_TTL_SECONDS))))
+BAR_CACHE_CLOSED_SESSION_TTL_SECONDS = max(BAR_CACHE_OPEN_SESSION_TTL_SECONDS, int(os.getenv("BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", "300")))
+BAR_CACHE_DAILY_TTL_SECONDS = max(BAR_CACHE_CLOSED_SESSION_TTL_SECONDS, int(os.getenv("BAR_CACHE_DAILY_TTL_SECONDS", "900")))
 BAR_CACHE_MAX_BARS = max(200, int(os.getenv("BAR_CACHE_MAX_BARS", "2500")))
 BAR_CACHE_IDLE_TTL_SECONDS = max(BAR_CACHE_TTL_SECONDS, int(os.getenv("BAR_CACHE_IDLE_TTL_SECONDS", "900")))
 BAR_CACHE_MAX_KEYS = max(100, int(os.getenv("BAR_CACHE_MAX_KEYS", "1600")))
@@ -732,12 +735,13 @@ async def _raw_upstream_get(path: str, params: dict[str, Any] | None = None) -> 
             token = await get_upstream_access_token(force_refresh=True)
             headers["Authorization"] = f"Bearer {token}"
             response = await client.get(f"{UPSTREAM}{path}", params=params, headers=headers)
-    if response.status_code == 429:
+    if response.status_code in {429, 503}:
         retry_after = response.headers.get("Retry-After", "").strip()
         headers = {"Retry-After": retry_after} if retry_after else None
+        detail_code = "UPSTREAM_RATE_LIMIT" if response.status_code == 429 else "UPSTREAM_UNAVAILABLE"
         raise HTTPException(
-            status_code=429,
-            detail=f"UPSTREAM_RATE_LIMIT{(': retry-after=' + retry_after) if retry_after else ''}",
+            status_code=response.status_code,
+            detail=f"{detail_code}{(': retry-after=' + retry_after) if retry_after else ''}",
             headers=headers,
         )
     if response.status_code >= 400:
@@ -868,10 +872,10 @@ async def _extend_upstream_cooldown(seconds: float) -> None:
 
 
 async def scanner_upstream_get(path: str, params: dict[str, Any]) -> httpx.Response:
-    """Shared market-data pacing + concurrency + bounded 429 retry.
+    """Shared market-data pacing + concurrency + bounded 429/503 Retry-After retry.
 
     Retry-After is promoted to a process-wide cooldown instead of sleeping only the coroutine
-    that observed the 429. This keeps concurrent bar/recent-tick callers from immediately
+    that observed the 429/503. This keeps concurrent bar/recent-tick callers from immediately
     hitting the provider again during its requested backoff window.
     """
     global _scanner_next_allowed_at
@@ -895,12 +899,16 @@ async def scanner_upstream_get(path: str, params: dict[str, Any]) -> httpx.Respo
                 return await _raw_upstream_get(path, params)
             except HTTPException as exc:
                 last_error = exc
-                if exc.status_code != 429:
+                retry_after_seconds = _retry_after_seconds(exc) or 0.0
+                retryable = exc.status_code == 429 or (exc.status_code == 503 and retry_after_seconds > 0)
+                if not retryable:
                     raise
-                _provider_quota_metrics["rateLimited"] = int(_provider_quota_metrics.get("rateLimited", 0)) + 1
+                if exc.status_code == 429:
+                    _provider_quota_metrics["rateLimited"] = int(_provider_quota_metrics.get("rateLimited", 0)) + 1
+                else:
+                    _provider_quota_metrics["unavailableRetryAfter"] = int(_provider_quota_metrics.get("unavailableRetryAfter", 0)) + 1
                 if attempt < SCANNER_RETRY_COUNT:
                     _provider_quota_metrics["retries"] = int(_provider_quota_metrics.get("retries", 0)) + 1
-                retry_after_seconds = _retry_after_seconds(exc) or 0.0
                 exponential_seconds = (SCANNER_RETRY_BASE_MS * (2**attempt)) / 1000.0
                 await _extend_upstream_cooldown(max(exponential_seconds, retry_after_seconds))
                 if attempt >= SCANNER_RETRY_COUNT:
@@ -1197,6 +1205,28 @@ async def _prewarm_bar_cache_once() -> None:
         _persist_bar_cache_to_disk()
 
 
+def _market_session_is_open(market: str, now_utc: datetime | None = None) -> bool:
+    """Conservative exchange-session classifier used only for cache freshness TTLs."""
+    current = now_utc or datetime.now(timezone.utc)
+    local = current.astimezone(timezone(timedelta(hours=3)))
+    if local.weekday() >= 5:
+        return False
+    minutes = local.hour * 60 + local.minute
+    if market.upper() in {"BIST", "VIOP"}:
+        return 10 * 60 <= minutes < 18 * 60 + 10
+    return True
+
+
+def cache_freshness_ttl_seconds(market: str, interval: str, now_utc: datetime | None = None) -> int:
+    """Single cache freshness policy for every market-history path."""
+    canonical = normalize_interval(interval)
+    if canonical == "1d":
+        return BAR_CACHE_DAILY_TTL_SECONDS
+    if _market_session_is_open(market, now_utc):
+        return BAR_CACHE_OPEN_SESSION_TTL_SECONDS
+    return BAR_CACHE_CLOSED_SESSION_TTL_SECONDS
+
+
 async def _cached_market_bars(
     market: str,
     symbol: str,
@@ -1221,7 +1251,8 @@ async def _cached_market_bars(
         cached = list(entry.get("candles") or [])
         if key in _bar_series_cache:
             _bar_series_cache[key]["lastAccess"] = now
-        fresh = bool(cached) and now - float(entry.get("at", 0.0)) <= BAR_CACHE_TTL_SECONDS
+        freshness_ttl = cache_freshness_ttl_seconds(market, canonical)
+        fresh = bool(cached) and now - float(entry.get("at", 0.0)) <= freshness_ttl
 
         # range=max is a real range request. The response is intentionally not clipped to
         # BAR_CACHE_MAX_BARS; only the rolling in-memory cache is bounded.
@@ -2446,7 +2477,12 @@ async def scanner_opportunities(
             "providerWeightFormulaVerified": False,
             "distributedProviderQuotaConfigured": bool(UPSTREAM_DISTRIBUTED_QUOTA and REDIS_URL),
             "snapshotBatchMaxSymbols": SNAPSHOT_BATCH_MAX_SYMBOLS,
-            "cacheTtlMs": BAR_CACHE_TTL_SECONDS * 1000,
+            "cacheTtlMs": BAR_CACHE_OPEN_SESSION_TTL_SECONDS * 1000,
+            "cacheFreshnessPolicy": {
+                "openSessionMs": BAR_CACHE_OPEN_SESSION_TTL_SECONDS * 1000,
+                "closedSessionMs": BAR_CACHE_CLOSED_SESSION_TTL_SECONDS * 1000,
+                "dailyMs": BAR_CACHE_DAILY_TTL_SECONDS * 1000,
+            },
             "serverBatchEnforced": True,
             "proactiveRateLimitEnforced": True,
         },

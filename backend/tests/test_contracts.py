@@ -2,6 +2,7 @@ import asyncio
 import importlib
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -608,6 +609,35 @@ async def test_retry_after_sets_process_wide_market_data_cooldown(monkeypatch):
     await main.scanner_upstream_get("/api/v1/market-data/bars", {"symbol": "ASELS"})
     assert calls
     assert calls[0] - started >= 0.02
+
+
+@pytest.mark.asyncio
+async def test_503_retry_after_sets_process_wide_market_data_cooldown(monkeypatch):
+    monkeypatch.setattr(main, "SCANNER_RETRY_COUNT", 0)
+    monkeypatch.setattr(main, "SCANNER_PACING_MS", 1)
+    monkeypatch.setattr(main, "SCANNER_RETRY_BASE_MS", 10)
+    main._scanner_next_allowed_at = 0.0
+
+    async def unavailable(path, params):
+        raise main.HTTPException(status_code=503, detail="maintenance", headers={"Retry-After": "0.05"})
+
+    monkeypatch.setattr(main, "_raw_upstream_get", unavailable)
+    with pytest.raises(main.HTTPException) as exc_info:
+        await main.scanner_upstream_get("/api/v1/market-data/bars", {"symbol": "THYAO"})
+    assert exc_info.value.status_code == 503
+    assert main._scanner_next_allowed_at - time.monotonic() > 0.02
+    assert main._provider_quota_metrics["unavailableRetryAfter"] == 1
+
+
+def test_cache_freshness_policy_is_centralized_by_session_and_interval(monkeypatch):
+    monkeypatch.setattr(main, "BAR_CACHE_OPEN_SESSION_TTL_SECONDS", 30)
+    monkeypatch.setattr(main, "BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", 300)
+    monkeypatch.setattr(main, "BAR_CACHE_DAILY_TTL_SECONDS", 900)
+    open_session = datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc)
+    closed_session = datetime(2026, 9, 23, 19, 0, tzinfo=timezone.utc)
+    assert main.cache_freshness_ttl_seconds("BIST", "5m", open_session) == 30
+    assert main.cache_freshness_ttl_seconds("BIST", "5m", closed_session) == 300
+    assert main.cache_freshness_ttl_seconds("BIST", "1d", open_session) == 900
 
 
 @pytest.mark.asyncio

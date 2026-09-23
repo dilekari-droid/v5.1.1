@@ -161,6 +161,10 @@ With the default hourly ceiling the effective request-start floor is at least **
 
 The backend must not invent a bar-count weight formula. When the provider's official formula is verified, the configurable weight model can be upgraded without changing the Android wire contract.
 
+HTTP 429 and HTTP 503 responses that include `Retry-After` extend the same process-wide/distributed cooldown gate before a retry. Responses without a provider retry window are not silently treated as rate-limit signals.
+
+History cache freshness is centralized in one policy: open-session intraday, closed-session intraday and daily TTLs are configurable independently; all history paths use the same policy decision.
+
 
 ## VİOP contract universe
 
