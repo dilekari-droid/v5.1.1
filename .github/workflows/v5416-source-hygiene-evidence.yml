@@ -36,14 +36,16 @@ jobs:
           test "$ACTUAL_COMMIT" = "$EXPECTED_COMMIT"
           test "$ACTUAL_TREE" = "$EXPECTED_TREE"
 
-      - name: Scan tracked source without printing secret values
+      - name: Scan every tracked source byte and archive entry without printing secret values
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
+          import io
           import json
           import re
           import subprocess
+          import zipfile
           from pathlib import Path
 
           expected_commit = '1508168247a7ff4c750e2b20404a8ef9ba69cabe'
@@ -70,46 +72,77 @@ jobs:
               'aws_access_key': re.compile(rb'\bAKIA[0-9A-Z]{16}\b'),
               'openai_style_key': re.compile(rb'\bsk-[A-Za-z0-9_-]{20,}\b'),
           }
-          hardcoded_assignment = re.compile(
+          runtime_assignment = re.compile(
               rb'\b(?:APP_API_KEY|SESSION_TOKEN_SECRET|TRADEWIZE_API_KEY|TRADEWIZE_ACCESS_TOKEN)\s*=\s*["\'][^"\'\r\n]{12,}["\']'
           )
 
           counts = {name: 0 for name in patterns}
-          counts['hardcoded_production_secret_assignment'] = 0
-          scanned_files = 0
-          skipped_binary = 0
+          counts['hardcoded_runtime_secret_assignment'] = 0
+          binary_paths = []
+          archive_paths = []
+          archive_entries_scanned = 0
+          raw_files_scanned = 0
+
+          def scan_known_patterns(data: bytes) -> None:
+              for name, pattern in patterns.items():
+                  counts[name] += len(pattern.findall(data))
 
           for path in paths:
-              # Historical patch transport files are not runtime source and may be base64/binary-like.
-              # They remain covered by forbidden-path checks but are excluded from literal-secret heuristics.
-              if path.startswith('patches/'):
-                  continue
               try:
                   data = Path(path).read_bytes()
               except OSError:
                   continue
+              raw_files_scanned += 1
+              scan_known_patterns(data)
+
               if b'\0' in data[:8192]:
-                  skipped_binary += 1
-                  continue
-              scanned_files += 1
-              for name, pattern in patterns.items():
-                  counts[name] += len(pattern.findall(data))
-              if '/tests/' not in path and '/src/test/' not in path and '/src/androidTest/' not in path:
-                  counts['hardcoded_production_secret_assignment'] += len(hardcoded_assignment.findall(data))
+                  binary_paths.append(path)
+
+              # Generic assignments are checked in production/runtime source only;
+              # test fixtures and historical patch transport are intentionally not
+              # treated as production credentials merely because they contain dummy values.
+              runtime_path = (
+                  path == 'backend/main.py'
+                  or path.startswith('android/app/src/main/')
+                  or path.startswith('.github/workflows/')
+              )
+              if runtime_path:
+                  counts['hardcoded_runtime_secret_assignment'] += len(runtime_assignment.findall(data))
+
+              if path.lower().endswith(('.zip', '.jar', '.apk', '.aab')):
+                  try:
+                      with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                          archive_paths.append(path)
+                          for info in zf.infolist():
+                              if info.is_dir():
+                                  continue
+                              archive_entries_scanned += 1
+                              # Bound a pathological archive entry while fully scanning the
+                              # known small source archives/JARs used by this repository.
+                              if info.file_size > 64 * 1024 * 1024:
+                                  raise RuntimeError(f'archive entry too large for deterministic scan: {path}:{info.filename}')
+                              scan_known_patterns(zf.read(info))
+                  except zipfile.BadZipFile:
+                      raise RuntimeError(f'archive-like tracked file is not a valid ZIP/JAR: {path}')
 
           findings = sum(counts.values()) + len(forbidden_paths)
           evidence = {
-              'schemaVersion': 1,
+              'schemaVersion': 2,
               'result': 'PASS' if findings == 0 else 'FAIL',
               'candidateCommit': actual_commit,
               'candidateTree': actual_tree,
               'trackedFileCount': len(paths),
-              'scannedTextFileCount': scanned_files,
-              'skippedBinaryFileCount': skipped_binary,
+              'rawFilesScanned': raw_files_scanned,
+              'binaryFileCount': len(binary_paths),
+              'binaryFilePaths': binary_paths,
+              'archiveFileCount': len(archive_paths),
+              'archiveFilePaths': archive_paths,
+              'archiveEntriesScanned': archive_entries_scanned,
               'forbiddenTrackedPathCount': len(forbidden_paths),
               'secretPatternCounts': counts,
+              'allTrackedRawBytesScanned': raw_files_scanned == len(paths),
+              'historicalPatchPayloadsRawScanned': True,
               'secretValuesLogged': False,
-              'historicalPatchPayloadsLiteralScanned': False,
           }
           out = Path('/tmp/v5416-source-hygiene-evidence.json')
           out.write_text(json.dumps(evidence, indent=2, sort_keys=True) + '\n', encoding='utf-8')
@@ -122,7 +155,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: V5.4.16-SOURCE-HYGIENE-EVIDENCE
+          name: V5.4.16-SOURCE-HYGIENE-EVIDENCE-V2
           path: /tmp/v5416-source-hygiene-evidence.json
           if-no-files-found: error
           retention-days: 30
