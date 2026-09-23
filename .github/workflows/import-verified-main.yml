@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Import exact verified source snapshot
+      - name: Import exact verified non-workflow source snapshot
         shell: bash
         run: |
           set -euo pipefail
@@ -35,7 +35,14 @@ jobs:
           test "$(git -C /tmp/v5416-source rev-parse HEAD)" = "${SOURCE_SHA}"
           test "$(git -C /tmp/v5416-source rev-parse HEAD^{tree})" = "${SOURCE_TREE}"
 
-          rsync -a --delete --exclude='.git/' /tmp/v5416-source/ ./
+          rsync -a --delete --exclude='.git/' --exclude='.github/workflows/' /tmp/v5416-source/ ./
+
+          rsync -ani --delete --checksum --exclude='.git/' --exclude='.github/workflows/' /tmp/v5416-source/ ./ > /tmp/import-diff.txt
+          if test -s /tmp/import-diff.txt; then
+            cat /tmp/import-diff.txt >&2
+            echo 'Non-workflow source mismatch after import.' >&2
+            exit 1
+          fi
 
           if find . -type f \( -name '*.apk' -o -name '*.aab' -o -name '*.jks' -o -name '*.keystore' -o -name 'local.properties' \) -print -quit | grep -q .; then
             echo 'Forbidden binary/secret-adjacent artifact found after import.' >&2
@@ -43,12 +50,12 @@ jobs:
           fi
 
           git add -A
-          IMPORT_TREE="$(git write-tree)"
-          echo "source_tree=${SOURCE_TREE}"
-          echo "import_tree=${IMPORT_TREE}"
-          test "${IMPORT_TREE}" = "${SOURCE_TREE}"
+          git diff --cached --name-only -- '.github/workflows/' | grep -q . && {
+            echo 'Workflow files must not be changed by the Actions migration step.' >&2
+            exit 1
+          } || true
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m "Import verified BorsaTakipV5 source snapshot ${SOURCE_SHA}"
+          git commit -m "Import verified non-workflow source snapshot ${SOURCE_SHA}"
           git push origin HEAD:main
