@@ -1,0 +1,128 @@
+name: V5.4.16 Source Hygiene Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-source-hygiene
+    paths:
+      - '.github/workflows/v5416-source-hygiene-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pinned pre-APK candidate
+        uses: actions/checkout@v4
+        with:
+          ref: release/v5.4.16-preapk-1508168
+          fetch-depth: 1
+
+      - name: Verify exact candidate provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_COMMIT='1508168247a7ff4c750e2b20404a8ef9ba69cabe'
+          EXPECTED_TREE='5024dbf26e4d461fed8944a15596fe554738b296'
+          ACTUAL_COMMIT="$(git rev-parse HEAD)"
+          ACTUAL_TREE="$(git rev-parse HEAD^{tree})"
+          echo "expectedCommit=$EXPECTED_COMMIT"
+          echo "actualCommit=$ACTUAL_COMMIT"
+          echo "expectedTree=$EXPECTED_TREE"
+          echo "actualTree=$ACTUAL_TREE"
+          test "$ACTUAL_COMMIT" = "$EXPECTED_COMMIT"
+          test "$ACTUAL_TREE" = "$EXPECTED_TREE"
+
+      - name: Scan tracked source without printing secret values
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          expected_commit = '1508168247a7ff4c750e2b20404a8ef9ba69cabe'
+          expected_tree = '5024dbf26e4d461fed8944a15596fe554738b296'
+          actual_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          actual_tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip()
+          if actual_commit != expected_commit or actual_tree != expected_tree:
+              raise SystemExit('candidate provenance mismatch')
+
+          tracked = subprocess.check_output(['git', 'ls-files', '-z']).split(b'\0')
+          paths = [p.decode('utf-8') for p in tracked if p]
+
+          forbidden_suffixes = ('.apk', '.aab', '.jks', '.keystore', '.p12', '.pfx', '.pem', '.key')
+          forbidden_basenames = {'.env', 'local.properties'}
+          forbidden_paths = [
+              p for p in paths
+              if p.lower().endswith(forbidden_suffixes) or Path(p).name.lower() in forbidden_basenames
+          ]
+
+          patterns = {
+              'borsa_key_prefix': re.compile(rb'\bbtk_[A-Za-z0-9_-]{20,}\b'),
+              'pem_private_key': re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
+              'github_pat': re.compile(rb'\b(?:ghp_|github_pat_)[A-Za-z0-9_]{20,}\b'),
+              'aws_access_key': re.compile(rb'\bAKIA[0-9A-Z]{16}\b'),
+              'openai_style_key': re.compile(rb'\bsk-[A-Za-z0-9_-]{20,}\b'),
+          }
+          hardcoded_assignment = re.compile(
+              rb'\b(?:APP_API_KEY|SESSION_TOKEN_SECRET|TRADEWIZE_API_KEY|TRADEWIZE_ACCESS_TOKEN)\s*=\s*["\'][^"\'\r\n]{12,}["\']'
+          )
+
+          counts = {name: 0 for name in patterns}
+          counts['hardcoded_production_secret_assignment'] = 0
+          scanned_files = 0
+          skipped_binary = 0
+
+          for path in paths:
+              # Historical patch transport files are not runtime source and may be base64/binary-like.
+              # They remain covered by forbidden-path checks but are excluded from literal-secret heuristics.
+              if path.startswith('patches/'):
+                  continue
+              try:
+                  data = Path(path).read_bytes()
+              except OSError:
+                  continue
+              if b'\0' in data[:8192]:
+                  skipped_binary += 1
+                  continue
+              scanned_files += 1
+              for name, pattern in patterns.items():
+                  counts[name] += len(pattern.findall(data))
+              if '/tests/' not in path and '/src/test/' not in path and '/src/androidTest/' not in path:
+                  counts['hardcoded_production_secret_assignment'] += len(hardcoded_assignment.findall(data))
+
+          findings = sum(counts.values()) + len(forbidden_paths)
+          evidence = {
+              'schemaVersion': 1,
+              'result': 'PASS' if findings == 0 else 'FAIL',
+              'candidateCommit': actual_commit,
+              'candidateTree': actual_tree,
+              'trackedFileCount': len(paths),
+              'scannedTextFileCount': scanned_files,
+              'skippedBinaryFileCount': skipped_binary,
+              'forbiddenTrackedPathCount': len(forbidden_paths),
+              'secretPatternCounts': counts,
+              'secretValuesLogged': False,
+              'historicalPatchPayloadsLiteralScanned': False,
+          }
+          out = Path('/tmp/v5416-source-hygiene-evidence.json')
+          out.write_text(json.dumps(evidence, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          print(out.read_text(), end='')
+          if findings:
+              raise SystemExit('source hygiene scan found prohibited path(s) or secret-like literal(s); values suppressed')
+          PY
+
+      - name: Upload source hygiene evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-SOURCE-HYGIENE-EVIDENCE
+          path: /tmp/v5416-source-hygiene-evidence.json
+          if-no-files-found: error
+          retention-days: 30
