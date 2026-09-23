@@ -1,0 +1,139 @@
+name: V5.1.1 Deep Audit Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v511-deep-audit-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-verify-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Apply deep source audit fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d .github/tmp/v511-deep-audit-fix.py.gz.b64 | gzip -d > /tmp/v511-deep-audit-fix.py
+          python /tmp/v511-deep-audit-fix.py
+          git diff --check
+
+      - name: Source isolation and security guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'dilekari-droid/v6-1-1|V6\.1\.1|v611' android backend contracts .github/scripts .github/workflows --exclude='v511-deep-audit-fix.yml'; then
+            echo 'V6 source/reference contamination detected in V5.1.1 tree' >&2
+            exit 1
+          fi
+          ! grep -q 'borsa-takip-v5416-final-production.up.railway.app' .github/workflows/production-e2e.yml
+          grep -q 'ALLOWED_APP_ENVS' backend/main.py
+          grep -q '_validate_https_upstream_base' backend/main.py
+          grep -q 'SESSION_TOKEN_MAX_LENGTH' backend/main.py
+          grep -q 'BackendUrlPolicy' android/app/src/main/java/tr/borsatakip/v5/data/ProviderReadinessService.kt
+          grep -q 'BackendUrlPolicy' android/app/src/main/java/tr/borsatakip/v5/data/BackendPreflightClient.kt
+          git diff --check
+
+      - name: Verify backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -q -r backend/requirements.txt pytest pytest-asyncio
+          python -m py_compile backend/main.py backend/e2e_smoke.py backend/e2e_provenance.py backend/preapk_readiness.py
+          (cd backend && PYTHONPATH=. python -m pytest -q)
+
+      - name: Verify Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          files = list(pathlib.Path('android/app/src/main/res/layout').glob('*.xml'))
+          for path in files:
+              ET.parse(path)
+          print(f'XML parse PASS: {len(files)} files')
+          PY
+          ./android/gradlew -p android --no-daemon testDebugUnitTest compileDebugKotlin compileDebugAndroidTestKotlin
+
+      - name: Commit verified deep audit fixes
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/v511-deep-audit-fix.yml .github/tmp/v511-deep-audit-fix.py.gz.b64
+          git add -A
+          git diff --cached --check
+          git commit -m 'hardening: close deep audit source gaps'
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          git push origin HEAD:main
+
+      - name: Package exact verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA='${{ steps.commit.outputs.sha }}'
+          SHORT="${SHA:0:12}"
+          ZIP="V5.1.1-KAYNAK-KOD-AUDIT-FINAL-${SHORT}.zip"
+          git archive --format=zip --output="$ZIP" "$SHA"
+          sha256sum "$ZIP" > "$ZIP.sha256"
+          python - <<PY
+          import json, pathlib
+          sha = '${{ steps.commit.outputs.sha }}'
+          short = sha[:12]
+          payload = {
+            'repository': 'dilekari-droid/v5.1.1',
+            'branch': 'main',
+            'sourceCommit': sha,
+            'package': f'V5.1.1-KAYNAK-KOD-AUDIT-FINAL-{short}.zip',
+            'sourceVerification': {
+              'backendPyCompile': 'PASS',
+              'backendPytest': 'PASS',
+              'androidUnitTest': 'PASS',
+              'androidKotlinCompile': 'PASS',
+              'androidTestKotlinCompile': 'PASS',
+              'xmlParse': 'PASS',
+              'v6IsolationGuard': 'PASS',
+              'appEnvFailClosed': 'PASS',
+              'upstreamHttpsOriginGuard': 'PASS',
+              'productionRevisionGuard': 'PASS',
+              'appKeyStrengthGuard': 'PASS',
+              'sessionTokenBounds': 'PASS',
+              'attestationConfigGuard': 'PASS',
+              'upstreamErrorRedaction': 'PASS',
+              'androidBackendUrlPolicy': 'PASS',
+              'redisQuotaFailureGuard': 'PASS'
+            },
+            'releaseReady': False,
+            'releaseReadyReason': 'External Railway exact-source deployment, real provider credentials/E2E, physical-device/OEM acceptance and release signing remain separately verifiable gates.'
+          }
+          pathlib.Path(f'V5.1.1-KAYNAK-KOD-AUDIT-FINAL-{short}-PROVENANCE.json').write_text(json.dumps(payload, indent=2) + '\n')
+          PY
+
+      - name: Upload verified source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.1.1-AUDIT-FINAL-${{ steps.commit.outputs.sha }}
+          path: |
+            V5.1.1-KAYNAK-KOD-AUDIT-FINAL-*.zip
+            V5.1.1-KAYNAK-KOD-AUDIT-FINAL-*.zip.sha256
+            V5.1.1-KAYNAK-KOD-AUDIT-FINAL-*-PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 30
