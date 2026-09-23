@@ -1,0 +1,131 @@
+# Final hardening verification remains source-only; release APK generation is a later gated step.
+name: Android V5.4.16 Source Verification CI
+
+on:
+  push:
+    branches: [main, v5.4.16-report-completion, v5.4.16-full-hardening, v5.4.16-final-hardening-13]
+    paths:
+      - 'android/**'
+      - 'contracts/**'
+      - '.github/workflows/android-build.yml'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/scripts/run-v5416-instrumentation.sh'
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'contracts/**'
+      - '.github/workflows/android-build.yml'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/scripts/run-v5416-instrumentation.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Gradle wrapper integrity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x android/gradlew
+          test -s android/gradlew.bat
+          test -s android/gradle/wrapper/gradle-wrapper.jar
+          test -s android/gradle/wrapper/gradle-wrapper.properties
+          grep -q 'gradle-8.11.1-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
+          grep -Eq '^distributionSha256Sum=[0-9a-f]{64}$' android/gradle/wrapper/gradle-wrapper.properties
+          ./android/gradlew --version
+      - name: Security, version and architecture gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionName = "5.4.16"' android/app/build.gradle.kts
+          grep -q 'versionCode = 556' android/app/build.gradle.kts
+          grep -q 'ManualScanLifecycleInstrumentationTest' android/app/src/androidTest/java/tr/borsatakip/v5/worker/ManualScanLifecycleInstrumentationTest.kt
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          roots = [Path('android'), Path('backend'), Path('contracts'), Path('.github')]
+          excluded_suffixes = {'.md', '.yml', '.yaml'}
+          patterns = (
+              re.compile(r'btk_[A-Za-z0-9]{20,}'),
+              re.compile(r"SESSION_TOKEN_SECRET\s*=\s*['\"][^'\"]+['\"]"),
+          )
+          hits = []
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix.lower() in excluded_suffixes:
+                      continue
+                  try:
+                      text = path.read_text(encoding='utf-8')
+                  except (UnicodeDecodeError, OSError):
+                      continue
+                  for lineno, line in enumerate(text.splitlines(), 1):
+                      if any(pattern.search(line) for pattern in patterns):
+                          hits.append(f'{path}:{lineno}')
+          if hits:
+              raise SystemExit('hardcoded secret pattern found at: ' + ', '.join(hits))
+          print('hardcoded secret scan: PASS')
+          PY
+      - name: Unit tests and Kotlin/instrumentation-source compilation only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./android/gradlew -p android --no-daemon testDebugUnitTest compileDebugKotlin compileDebugAndroidTestKotlin
+
+  instrumentation-test:
+    needs: source-test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [31, 33, 34, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Gradle wrapper integrity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x android/gradlew
+          test -s android/gradlew.bat
+          test -s android/gradle/wrapper/gradle-wrapper.jar
+          grep -q 'gradle-8.11.1-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
+      - name: Enable KVM when available
+        shell: bash
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+          fi
+      - name: Run V5.4.16 lifecycle instrumentation tests on Android API ${{ matrix.api-level }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash .github/scripts/run-v5416-instrumentation.sh
