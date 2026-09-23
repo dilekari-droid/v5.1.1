@@ -1,0 +1,147 @@
+{
+  "version": "V5.4.16",
+  "scope": "all-android-backend-routes",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/v1/health",
+      "androidClient": "BackendHealthClient",
+      "mode": "implemented",
+      "androidNeedle": "/v1/health"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/auth/session",
+      "androidClient": "BackendSessionClient",
+      "capability": "shortLivedSessionAuth",
+      "mode": "implemented",
+      "androidNeedle": "/v1/auth/session"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bist/symbols",
+      "androidClient": "MobileMarketDataProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/bist/symbols"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bist/quote/{symbol}",
+      "androidClient": "MobileMarketDataProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/bist/quote/"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bist/history/{symbol}",
+      "androidClient": "MobileMarketDataProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/bist/history/"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bist/history-window/{symbol}",
+      "androidClient": "MobileMarketDataProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/bist/history-window/"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/bist/snapshot-batch",
+      "androidClient": "MobileMarketDataProvider",
+      "capability": "bistSnapshotBatch",
+      "mode": "implemented",
+      "androidNeedle": "/v1/bist/snapshot-batch"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/preflight",
+      "androidClient": "BackendPreflightClient",
+      "mode": "implemented",
+      "androidNeedle": "/v1/preflight"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/provider/capabilities",
+      "androidClient": "MarketCapabilityClient",
+      "mode": "implemented",
+      "androidNeedle": "v1/provider/capabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/viop/contracts",
+      "androidClient": "BackendProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/viop/contracts"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/viop/quote/{symbol}",
+      "androidClient": "BackendProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/viop/quote/"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/viop/history/{symbol}",
+      "androidClient": "BackendProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/viop/history/"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/scanner/opportunities",
+      "androidClient": "DynamicMarketScannerClient",
+      "capability": "dynamicScanner",
+      "mode": "implemented",
+      "androidNeedle": "v1/scanner/opportunities"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/realtime/opportunities",
+      "androidClient": "RealtimeScannerClient",
+      "capability": "realtimeScannerRest",
+      "mode": "reserved-fail-closed",
+      "androidNeedle": "v1/realtime/opportunities"
+    },
+    {
+      "method": "WS",
+      "path": "/v1/live",
+      "androidClient": "LiveMarketSocket",
+      "capability": "liveMarketWebSocket",
+      "mode": "reserved-fail-closed",
+      "androidNeedle": "/v1/live"
+    },
+    {
+      "method": "WS",
+      "path": "/v1/scanner/live",
+      "androidClient": "RealtimeScannerSocket",
+      "capability": "realtimeScannerWebSocket",
+      "mode": "reserved-fail-closed",
+      "androidNeedle": "/v1/scanner/live"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/news",
+      "androidClient": "BackendProvider",
+      "mode": "implemented",
+      "androidNeedle": "/v1/news"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/tradingview/signals",
+      "androidClient": "TradingViewSignalClient",
+      "capability": "tradingViewSignals",
+      "mode": "reserved-fail-closed",
+      "androidNeedle": "/v1/tradingview/signals"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/research/foundation",
+      "androidClient": "ResearchApiClient",
+      "capability": "researchFoundation",
+      "mode": "reserved-fail-closed",
+      "androidNeedle": "/v1/research/foundation"
+    }
+  ]
+}
