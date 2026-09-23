@@ -25,8 +25,6 @@ jobs:
           gzip -dc .github/tmp/v511-close-gaps.patch.gz > /tmp/v511-close-gaps.patch
           git apply --check /tmp/v511-close-gaps.patch
           git apply /tmp/v511-close-gaps.patch
-          rm -f .github/tmp/v511-close-gaps.patch.gz
-          rm -f .github/workflows/v511-apply-close-gaps.yml
           python -m pip install --disable-pip-version-check -q -r backend/requirements.txt pytest pytest-asyncio
           python -m py_compile backend/main.py backend/e2e_smoke.py backend/e2e_provenance.py backend/benchmark_full_bist.py backend/preapk_readiness.py
           (cd backend && PYTHONPATH=. python -m pytest -q)
@@ -38,9 +36,12 @@ jobs:
           print(f'XML parse PASS: {len(files)} files')
           PY
           git diff --check
+          # Workflow changes are committed separately via the GitHub connector because
+          # the ephemeral GITHUB_TOKEN intentionally has no workflows permission.
+          git checkout HEAD -- .github/workflows/production-e2e.yml .github/workflows/v511-apply-close-gaps.yml
           git status --short
           test -n "$(git status --porcelain)"
-      - name: Commit hardened source
+      - name: Commit hardened non-workflow source
         shell: bash
         run: |
           set -euo pipefail
