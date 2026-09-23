@@ -1,0 +1,173 @@
+name: V5.4.16 Pre-APK Source Package Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-preapk-source-package-ca3f6aa
+    paths:
+      - '.github/workflows/v5416-preapk-source-package-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA='ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c'
+          EXPECTED_TREE='e7e839d95a89c29421369a602dae13d35c93eac2'
+          EXPECTED_BACKEND_TREE='97a9e66b2b3d262e8341f9c9b3db086a0bbd566b'
+          EXPECTED_ANDROID_TREE='0882f7ffcdf52a13c8785ce8eeef9347d517febb'
+          EXPECTED_CONTRACTS_TREE='a4ef5f9267b4ddffd06f02c603e44eac214073e3'
+          git cat-file -e "$SOURCE_SHA^{commit}"
+          test "$(git show -s --format=%T "$SOURCE_SHA")" = "$EXPECTED_TREE"
+          test "$(git rev-parse "$SOURCE_SHA:backend")" = "$EXPECTED_BACKEND_TREE"
+          test "$(git rev-parse "$SOURCE_SHA:android")" = "$EXPECTED_ANDROID_TREE"
+          test "$(git rev-parse "$SOURCE_SHA:contracts")" = "$EXPECTED_CONTRACTS_TREE"
+
+      - name: Source-only path hygiene gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA='ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c'
+          git ls-tree -r --name-only "$SOURCE_SHA" > /tmp/source-paths.txt
+          if grep -Eq '(^|/)(patches)(/|$)' /tmp/source-paths.txt; then
+            echo 'temporary patches directory is forbidden in the pre-APK source package' >&2
+            exit 1
+          fi
+          if grep -Eqi '\.(apk|aab|jks|keystore)$|(^|/)local\.properties$' /tmp/source-paths.txt; then
+            echo 'release/build/signing artifact found in source tree' >&2
+            exit 1
+          fi
+          if grep -Eq '(^|/)(__pycache__|\.pytest_cache|\.gradle)(/|$)|(^|/)(build)(/|$)' /tmp/source-paths.txt; then
+            echo 'generated cache/build directory found in source tree' >&2
+            exit 1
+          fi
+
+      - name: Version and Gradle wrapper integrity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA='ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c'
+          git show "$SOURCE_SHA:android/app/build.gradle.kts" > /tmp/build.gradle.kts
+          grep -Eq 'versionCode[[:space:]]*=[[:space:]]*556' /tmp/build.gradle.kts
+          grep -Eq 'versionName[[:space:]]*=[[:space:]]*"5\.4\.16"' /tmp/build.gradle.kts
+          git show "$SOURCE_SHA:android/gradle/wrapper/gradle-wrapper.properties" > /tmp/gradle-wrapper.properties
+          grep -Fq 'gradle-8.11.1-' /tmp/gradle-wrapper.properties
+          grep -Fq 'distributionSha256Sum=' /tmp/gradle-wrapper.properties
+          test "$(git cat-file -s "$SOURCE_SHA:android/gradle/wrapper/gradle-wrapper.jar")" -eq 43583
+          git cat-file -e "$SOURCE_SHA:android/gradlew"
+          git cat-file -e "$SOURCE_SHA:android/gradlew.bat"
+
+      - name: Build exact source-only ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA='ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c'
+          ZIP='V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.zip'
+          PREFIX='V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED/'
+          git archive --format=zip --prefix="$PREFIX" "$SOURCE_SHA" -o "$ZIP"
+          sha256sum "$ZIP" > "$ZIP.sha256"
+
+      - name: Independently verify ZIP CRC, paths and hardcoded secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          import shutil
+          import zipfile
+          from pathlib import Path
+
+          zip_path = Path('V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.zip')
+          root = Path('/tmp/v5416-source-verify')
+          shutil.rmtree(root, ignore_errors=True)
+          root.mkdir(parents=True)
+
+          with zipfile.ZipFile(zip_path) as zf:
+              bad = zf.testzip()
+              if bad:
+                  raise SystemExit(f'ZIP CRC failure: {bad}')
+              names = zf.namelist()
+              forbidden = re.compile(r'(^|/)(patches)(/|$)|\.(apk|aab|jks|keystore)$|(^|/)local\.properties$', re.I)
+              generated = re.compile(r'(^|/)(__pycache__|\.pytest_cache|\.gradle|build)(/|$)')
+              bad_paths = [name for name in names if forbidden.search(name) or generated.search(name)]
+              if bad_paths:
+                  raise SystemExit('forbidden ZIP paths: ' + ', '.join(bad_paths[:20]))
+              zf.extractall(root)
+
+          secret_patterns = [
+              re.compile(r'btk_[A-Za-z0-9]{20,}'),
+              re.compile(r'-----BEGIN (?:EC |RSA )?PRIVATE KEY-----'),
+              re.compile(r'APP_API_KEY\s*=\s*["\'][^"\']{16,}["\']'),
+              re.compile(r'SESSION_TOKEN_SECRET\s*=\s*["\'][^"\']{16,}["\']'),
+              re.compile(r'TRADEWIZE_(?:API_KEY|ACCESS_TOKEN)\s*=\s*["\'][^"\']{16,}["\']'),
+          ]
+          hits = []
+          for path in root.rglob('*'):
+              if not path.is_file():
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except (UnicodeDecodeError, OSError):
+                  continue
+              for pattern in secret_patterns:
+                  if pattern.search(text):
+                      hits.append(str(path.relative_to(root)))
+                      break
+          if hits:
+              raise SystemExit('hardcoded secret/private-key pattern found in: ' + ', '.join(hits[:20]))
+          print('ZIP_CRC=PASS')
+          print('FORBIDDEN_PATHS=0')
+          print('HARDCODED_SECRET_PATTERNS=0')
+          PY
+
+      - name: Write provenance and release-readiness record
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_SHA='ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c'
+          TREE_SHA='e7e839d95a89c29421369a602dae13d35c93eac2'
+          BACKEND_TREE='97a9e66b2b3d262e8341f9c9b3db086a0bbd566b'
+          ANDROID_TREE='0882f7ffcdf52a13c8785ce8eeef9347d517febb'
+          CONTRACTS_TREE='a4ef5f9267b4ddffd06f02c603e44eac214073e3'
+          ZIP='V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.zip'
+          ZIP_SHA256="$(sha256sum "$ZIP" | awk '{print $1}')"
+          cat > V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.provenance.txt <<EOF
+          APP_VERSION=5.4.16
+          VERSION_CODE=556
+          REPOSITORY=dilekari-droid/v5.1.1
+          SOURCE_BRANCH=release/v5.4.16-preapk-ca3f6aa
+          SOURCE_COMMIT=$SOURCE_SHA
+          SOURCE_TREE=$TREE_SHA
+          BACKEND_TREE=$BACKEND_TREE
+          ANDROID_TREE=$ANDROID_TREE
+          CONTRACTS_TREE=$CONTRACTS_TREE
+          SOURCE_ZIP=$ZIP
+          SOURCE_ZIP_SHA256=$ZIP_SHA256
+          SOURCE_ONLY=YES
+          APK_AAB_INCLUDED=NO
+          RELEASE_READY=NO
+          OPEN_EXTERNAL_GATES=production_exact_deployment,tradewize_provider_credential,production_e2e_pass,open_session_freshness,physical_device_acceptance,distribution_history,release_signing
+          EOF
+          cat V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.provenance.txt
+
+      - name: Upload verified source package evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-PREAPK-SOURCE-VERIFIED-ca3f6aa
+          path: |
+            V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.zip
+            V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.zip.sha256
+            V5.4.16-KAYNAK-KOD-PREAPK-VERIFIED-ca3f6aa.provenance.txt
+          if-no-files-found: error
+          retention-days: 30
