@@ -1,3 +1,4 @@
+# final-clean-source-verification: v511-r1
 # Final hardening verification remains source-only; release APK generation is a later gated step.
 name: Android V5.4.16 Source Verification CI
 
