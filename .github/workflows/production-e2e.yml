@@ -20,6 +20,15 @@ jobs:
           python-version: '3.12'
       - name: Install smoke dependencies
         run: python -m pip install 'httpx==0.28.1'
+      - name: Verify deployed source provenance
+        shell: bash
+        env:
+          BORSA_E2E_EXPECTED_REVISION: ${{ github.sha }}
+          BORSA_E2E_DEPLOYMENT_REVISION: ${{ vars.BORSA_E2E_DEPLOYMENT_REVISION }}
+          BORSA_E2E_PROVENANCE_ARTIFACT_PATH: production-e2e-provenance.json
+        run: |
+          set -euo pipefail
+          python backend/e2e_provenance.py 2>&1 | tee production-e2e-provenance.log
       - name: Run production E2E contract smoke
         shell: bash
         env:
@@ -41,6 +50,8 @@ jobs:
         with:
           name: V5.4.16-PRODUCTION-E2E-${{ github.run_id }}
           path: |
+            production-e2e-provenance.log
+            production-e2e-provenance.json
             production-e2e.log
             production-e2e-evidence.json
           if-no-files-found: error
