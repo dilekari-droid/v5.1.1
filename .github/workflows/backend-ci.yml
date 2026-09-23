@@ -94,13 +94,19 @@ jobs:
           grep -Fq 'test_session_subject_epoch_revocation_invalidates_old_tokens' backend/tests/test_contracts.py
           grep -Fq 'test_snapshot_batch_request_id_single_flight_and_completed_hit' backend/tests/test_contracts.py
           test -s backend/tests/test_preapk_readiness.py
+
+          # Production E2E provenance must remain fail-closed and tested.
+          test -s backend/e2e_provenance.py
+          test -s backend/tests/test_e2e_provenance.py
+          grep -Fq 'fetch_live_revision' backend/e2e_provenance.py
+          grep -Fq 'test_extract_live_revision_does_not_treat_railway_deployment_id_as_git_sha' backend/tests/test_e2e_provenance.py
       - name: Python compile and full contract/runtime tests
         shell: bash
         run: |
           set -euo pipefail
-          python -m py_compile backend/main.py backend/e2e_smoke.py backend/benchmark_full_bist.py backend/preapk_readiness.py
+          python -m py_compile backend/main.py backend/e2e_smoke.py backend/e2e_provenance.py backend/benchmark_full_bist.py backend/preapk_readiness.py
           (cd backend && PYTHONPATH=. pytest -q)
       - name: Docker build
         run: docker build -t borsatakip-production-backend-v5416 ./backend
 
-# verification-trigger: close-118-r7-contract-gates-v2
+# verification-trigger: provenance-live-health-and-clean-source-v3
