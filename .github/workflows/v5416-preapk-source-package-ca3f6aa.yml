@@ -1,0 +1,155 @@
+name: V5.4.16 Pre-APK Source Package Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-preapk-source-package-ca3f6aa
+    paths:
+      - '.github/workflows/v5416-preapk-source-package-ca3f6aa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact verified source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c
+          fetch-depth: 1
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Exact source provenance gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_COMMIT='ca3f6aa32279fd03ef9c0df279df4ab37f49ca9c'
+          EXPECTED_TREE='e7e839d95a89c29421369a602dae13d35c93eac2'
+          EXPECTED_ANDROID_TREE='0882f7ffcdf52a13c8785ce8eeef9347d517febb'
+          EXPECTED_BACKEND_TREE='97a9e66b2b3d262e8341f9c9b3db086a0bbd566b'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
+          test "$(git rev-parse HEAD:android)" = "$EXPECTED_ANDROID_TREE"
+          test "$(git rev-parse HEAD:backend)" = "$EXPECTED_BACKEND_TREE"
+
+      - name: Source-only hygiene and version gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d patches
+          if git ls-files | grep -Eiq '\.(apk|aab)$'; then
+            echo 'Tracked APK/AAB found in source tree' >&2
+            exit 1
+          fi
+          if git ls-files | grep -Eiq '(^|/)(local\.properties|\.env($|\.)|[^/]+\.(jks|keystore|p12|pfx))$'; then
+            echo 'Tracked local secret/signing material found' >&2
+            exit 1
+          fi
+          grep -Fq 'versionCode = 556' android/app/build.gradle.kts
+          grep -Fq 'versionName = "5.4.16"' android/app/build.gradle.kts
+          test -f android/gradlew
+          test -f android/gradlew.bat
+          test -s android/gradle/wrapper/gradle-wrapper.jar
+          test -s android/gradle/wrapper/gradle-wrapper.properties
+          grep -Fq 'gradle-8.11.1-bin.zip' android/gradle/wrapper/gradle-wrapper.properties
+          grep -Fq 'distributionSha256Sum=f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6' android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Hardcoded secret material scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -I -n -E 'btk_[A-Za-z0-9]{20,}' -- .; then
+            echo 'Potential hardcoded application API key found' >&2
+            exit 1
+          fi
+          if git grep -I -n -E -- '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----' -- .; then
+            echo 'Private key material found' >&2
+            exit 1
+          fi
+
+      - name: Gradle wrapper runtime gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x android/gradlew
+          ./android/gradlew --version
+
+      - name: Build source-only ZIP and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME='V5.4.16-KAYNAK-KOD-PREAPK-CA3F6AA'
+          ZIP="/tmp/${NAME}.zip"
+          SHA="/tmp/${NAME}.zip.sha256"
+          PROV="/tmp/${NAME}-PROVENANCE.json"
+          git archive --format=zip --prefix="${NAME}/" --output="$ZIP" HEAD
+          sha256sum "$ZIP" | tee "$SHA"
+          python - <<'PY'
+          import json
+          import subprocess
+          import zipfile
+          from pathlib import Path
+
+          name = 'V5.4.16-KAYNAK-KOD-PREAPK-CA3F6AA'
+          zpath = Path('/tmp') / f'{name}.zip'
+          with zipfile.ZipFile(zpath, 'r') as zf:
+              bad = zf.testzip()
+              if bad is not None:
+                  raise SystemExit(f'ZIP CRC failure: {bad}')
+              names = zf.namelist()
+              lowered = [n.lower() for n in names]
+              if any(n.endswith('.apk') or n.endswith('.aab') for n in lowered):
+                  raise SystemExit('APK/AAB unexpectedly present in source ZIP')
+              if any('/patches/' in n or n.startswith(f'{name}/patches/') for n in names):
+                  raise SystemExit('temporary patches directory unexpectedly present in ZIP')
+
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+
+          sha_line = (Path('/tmp') / f'{name}.zip.sha256').read_text().strip()
+          evidence = {
+              'schemaVersion': 1,
+              'artifactType': 'source-only-preapk',
+              'artifactName': f'{name}.zip',
+              'sourceCommit': git('rev-parse', 'HEAD'),
+              'sourceTree': git('rev-parse', 'HEAD^{tree}'),
+              'androidTree': git('rev-parse', 'HEAD:android'),
+              'backendTree': git('rev-parse', 'HEAD:backend'),
+              'versionName': '5.4.16',
+              'versionCode': 556,
+              'releaseReady': 'NO',
+              'apkProduced': False,
+              'zipCrc': 'PASS',
+              'sha256': sha_line.split()[0],
+              'remainingExternalGates': [
+                  'production deployment exact-source provenance',
+                  'real provider production E2E PASS artifact',
+                  'open-session BIST freshness',
+                  'physical-device lifecycle acceptance',
+                  'version distribution-history decision',
+                  'release signing and final APK validation'
+              ]
+          }
+          target = Path('/tmp') / f'{name}-PROVENANCE.json'
+          target.write_text(json.dumps(evidence, indent=2, sort_keys=True) + '\n')
+          print(target.read_text(), end='')
+          PY
+
+      - name: Upload pre-APK source evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-KAYNAK-KOD-PREAPK-CA3F6AA
+          path: |
+            /tmp/V5.4.16-KAYNAK-KOD-PREAPK-CA3F6AA.zip
+            /tmp/V5.4.16-KAYNAK-KOD-PREAPK-CA3F6AA.zip.sha256
+            /tmp/V5.4.16-KAYNAK-KOD-PREAPK-CA3F6AA-PROVENANCE.json
+          if-no-files-found: error
+          retention-days: 30
