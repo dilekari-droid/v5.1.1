@@ -27,7 +27,7 @@ jobs:
           git apply /tmp/v511-close-gaps.patch
           rm -f .github/tmp/v511-close-gaps.patch.gz
           rm -f .github/workflows/v511-apply-close-gaps.yml
-          python -m pip install --disable-pip-version-check -q -r backend/requirements.txt pytest
+          python -m pip install --disable-pip-version-check -q -r backend/requirements.txt pytest pytest-asyncio
           python -m py_compile backend/main.py backend/e2e_smoke.py backend/e2e_provenance.py backend/benchmark_full_bist.py backend/preapk_readiness.py
           (cd backend && PYTHONPATH=. python -m pytest -q)
           python - <<'PY'
