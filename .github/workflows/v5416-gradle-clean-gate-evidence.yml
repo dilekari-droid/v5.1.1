@@ -1,0 +1,132 @@
+name: V5.4.16 Gradle Clean Gate Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-gradle-clean-gate
+    paths:
+      - '.github/workflows/v5416-gradle-clean-gate-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gradle-clean-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pinned pre-APK candidate
+        uses: actions/checkout@v4
+        with:
+          ref: release/v5.4.16-preapk-1508168
+          fetch-depth: 1
+
+      - name: Verify exact candidate provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '1508168247a7ff4c750e2b20404a8ef9ba69cabe'
+          test "$(git rev-parse HEAD^{tree})" = '5024dbf26e4d461fed8944a15596fe554738b296'
+          test -x android/gradlew
+          test -f android/gradlew.bat
+          test -f android/gradle/wrapper/gradle-wrapper.jar
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/gradle/wrapper/gradle-wrapper.properties
+            android/settings.gradle.kts
+            android/build.gradle.kts
+            android/app/build.gradle.kts
+
+      - name: Verify official wrapper execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./android/gradlew -p android --no-daemon --version | tee /tmp/gradle-version.txt
+          grep -q 'Gradle 8.11.1' /tmp/gradle-version.txt
+
+      - name: Clean checkout unit and Kotlin compile gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./android/gradlew -p android --no-daemon testDebugUnitTest compileDebugKotlin
+
+      - name: Verify release fails closed without backend configuration
+        shell: bash
+        env:
+          BORSA_BACKEND_URL: ''
+          BORSA_PRODUCTION_BACKEND_URL: ''
+          BORSA_ATTESTATION_PUBLIC_KEYS: ''
+          BORSA_KEYSTORE_PATH: ''
+          BORSA_STORE_PASSWORD: ''
+          BORSA_KEY_ALIAS: ''
+          BORSA_KEY_PASSWORD: ''
+        run: |
+          set -euo pipefail
+          set +e
+          ./android/gradlew -p android --no-daemon compileReleaseKotlin > /tmp/release-missing-config.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'Release/production build için BORSA_BACKEND_URL veya -Pborsa.backendUrl zorunludur.' /tmp/release-missing-config.log
+
+      - name: Verify release fails closed without signing credentials
+        shell: bash
+        env:
+          BORSA_KEYSTORE_PATH: ''
+          BORSA_STORE_PASSWORD: ''
+          BORSA_KEY_ALIAS: ''
+          BORSA_KEY_PASSWORD: ''
+        run: |
+          set -euo pipefail
+          set +e
+          ./android/gradlew -p android --no-daemon \
+            -Pborsa.backendUrl=https://example.com \
+            -Pborsa.attestationPublicKeys=tradewize:test-key:1:ZmFrZS1wdWJsaWMta2V5 \
+            compileReleaseKotlin > /tmp/release-missing-signing.log 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'Release APK üretimi için güvenli imzalama değişkenleri zorunludur.' /tmp/release-missing-signing.log
+
+      - name: Build redacted Gradle evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          payload = {
+              'schemaVersion': 1,
+              'result': 'PASS',
+              'candidateCommit': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
+              'candidateTree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'], text=True).strip(),
+              'gradleVersion': '8.11.1',
+              'wrapperExecuted': True,
+              'debugUnitTestsPassed': True,
+              'debugKotlinCompilePassed': True,
+              'releaseMissingBackendConfigRejected': True,
+              'releaseMissingSigningRejected': True,
+              'apkProduced': False,
+              'secretValuesIncluded': False,
+          }
+          out = Path('/tmp/v5416-gradle-clean-gate-evidence.json')
+          out.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          print(out.read_text(), end='')
+          PY
+
+      - name: Upload Gradle gate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-GRADLE-CLEAN-GATE-EVIDENCE
+          path: |
+            /tmp/gradle-version.txt
+            /tmp/v5416-gradle-clean-gate-evidence.json
+          if-no-files-found: error
+          retention-days: 30
