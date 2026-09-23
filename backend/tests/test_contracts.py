@@ -166,6 +166,7 @@ async def test_scanner_enforces_server_batch_and_exposes_coverage(monkeypatch):
     monkeypatch.setattr(main, "discover_bist_quotes", fake_discover)
     monkeypatch.setattr(main, "_scan_symbol", fake_scan)
     monkeypatch.setattr(main, "provider_capabilities", fake_caps)
+    monkeypatch.setattr(main, "_provider_weight_formula_is_verified", lambda: True)
 
     response = await main.scanner_opportunities(
         market="BIST",
@@ -188,6 +189,7 @@ async def test_scanner_enforces_server_batch_and_exposes_coverage(monkeypatch):
     assert response["providerReady"] is True
     assert response["globalProviderReady"] is False
     assert response["scanPolicy"]["serverBatchEnforced"] is True
+    assert response["scanPolicy"]["providerWeightFormulaVerified"] is True
 
 
 @pytest.mark.asyncio

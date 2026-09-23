@@ -2600,7 +2600,7 @@ async def scanner_opportunities(
             "rateLimitWeightPerMinute": SCANNER_RATE_LIMIT_WEIGHT_PER_MINUTE,
             "requestWeight": SCANNER_REQUEST_WEIGHT,
             "quotaScope": UPSTREAM_QUOTA_SCOPE,
-            "providerWeightFormulaVerified": False,
+            "providerWeightFormulaVerified": _provider_weight_formula_is_verified(),
             "distributedProviderQuotaConfigured": bool(UPSTREAM_DISTRIBUTED_QUOTA and REDIS_URL),
             "snapshotBatchMaxSymbols": SNAPSHOT_BATCH_MAX_SYMBOLS,
             "cacheTtlMs": BAR_CACHE_TTL_SECONDS * 1000,
@@ -2862,7 +2862,7 @@ async def realtime_opportunities(
             "message": "V538 attestation/replay sözleşmesi backend tarafında etkin değil; dinamik scanner sonucu realtime diye yükseltilmez.",
             "realtime": False,
             "attestationReady": False,
-    "attestationConfigured": bool(ATTESTATION_PRIVATE_KEYS_JSON and ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION > 0),
+            "attestationConfigured": bool(ATTESTATION_PRIVATE_KEYS_JSON and ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION > 0),
         },
     )
 
