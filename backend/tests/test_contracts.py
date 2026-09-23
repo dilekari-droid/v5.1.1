@@ -465,6 +465,14 @@ async def test_session_bootstrap_requires_long_lived_key_and_installation_id(mon
         await main.create_backend_session("Bearer wrong", "installation-abc")
 
 
+def test_health_is_public_but_data_routes_remain_protected(monkeypatch):
+    monkeypatch.setattr(main, "APP_API_KEY", "bootstrap-key")
+    health_response = client.get("/v1/health")
+    protected_response = client.get("/v1/bist/symbols")
+    assert health_response.status_code == 200
+    assert protected_response.status_code == 401
+
+
 def test_session_token_http_auth_is_bound_to_installation_header(monkeypatch):
     monkeypatch.setattr(main, "APP_API_KEY", "bootstrap-key")
     monkeypatch.setattr(main, "SESSION_TOKEN_SECRET", "session-secret")
