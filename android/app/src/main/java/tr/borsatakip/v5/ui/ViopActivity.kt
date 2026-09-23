@@ -65,6 +65,7 @@ class ViopActivity : BaseActivity() {
     private var uiCategory = UiCategory.ALL
     private var uiDirection = UiDirection.ALL
     private var uiSort = UiSort.RANKING
+    private var uiAdvancedFilters = false
     private val scanGuard = ViopScanGenerationGuard()
     private var scanJob: Job? = null
     private var lastProductionResult: ViopScanResult? = null
@@ -82,6 +83,7 @@ class ViopActivity : BaseActivity() {
         status = findViewById(R.id.status)
         providerStatus = findViewById(R.id.providerStatus)
         scanButton = findViewById(R.id.refresh)
+        restoreDashboardState(savedInstanceState)
         list.layoutManager = LinearLayoutManager(this, RecyclerView.VERTICAL, false)
         findViewById<TextView>(R.id.openSettings).setOnClickListener { openViopSettings() }
         findViewById<TextView>(R.id.openFavorites).setOnClickListener { startActivity(Intent(this, FavoritesActivity::class.java)) }
@@ -534,10 +536,14 @@ class ViopActivity : BaseActivity() {
     }
 
     private fun bindDashboardFilters() {
-        findViewById<EditText>(R.id.viopSearch).addTextChangedListener(object : TextWatcher {
+        val search = findViewById<EditText>(R.id.viopSearch)
+        if (search.text.toString() != uiQuery) search.setText(uiQuery)
+        findViewById<View>(R.id.advancedFilterRow).visibility = if (uiAdvancedFilters) View.VISIBLE else View.GONE
+        search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                 uiQuery = s?.toString().orEmpty().trim()
+                persistDashboardState()
                 applyDashboardFilter()
             }
             override fun afterTextChanged(s: Editable?) = Unit
@@ -545,6 +551,7 @@ class ViopActivity : BaseActivity() {
         findViewById<Button>(R.id.filterAll).setOnClickListener {
             uiCategory = UiCategory.ALL
             uiDirection = UiDirection.ALL
+            persistDashboardState()
             updateDashboardFilterColors()
             applyDashboardFilter()
         }
@@ -557,28 +564,35 @@ class ViopActivity : BaseActivity() {
         ).forEach { (id, category) ->
             findViewById<Button>(id).setOnClickListener {
                 uiCategory = category
+                persistDashboardState()
                 updateDashboardFilterColors()
                 applyDashboardFilter()
             }
         }
         findViewById<Button>(R.id.filterLong).setOnClickListener {
             uiDirection = if (uiDirection == UiDirection.LONG) UiDirection.ALL else UiDirection.LONG
+            persistDashboardState()
             updateDashboardFilterColors()
             applyDashboardFilter()
         }
         findViewById<Button>(R.id.filterShort).setOnClickListener {
             uiDirection = if (uiDirection == UiDirection.SHORT) UiDirection.ALL else UiDirection.SHORT
+            persistDashboardState()
             updateDashboardFilterColors()
             applyDashboardFilter()
         }
         findViewById<Button>(R.id.filterWatch).setOnClickListener {
             uiDirection = if (uiDirection == UiDirection.WATCH) UiDirection.ALL else UiDirection.WATCH
+            persistDashboardState()
             updateDashboardFilterColors()
             applyDashboardFilter()
         }
         findViewById<Button>(R.id.detailedFilter).setOnClickListener {
+            uiAdvancedFilters = !uiAdvancedFilters
             val advanced = findViewById<View>(R.id.advancedFilterRow)
-            advanced.visibility = if (advanced.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            advanced.visibility = if (uiAdvancedFilters) View.VISIBLE else View.GONE
+            persistDashboardState()
+            findViewById<Button>(R.id.detailedFilter).contentDescription = if (uiAdvancedFilters) "Detaylı filtreleri kapat" else "Detaylı filtreleri aç"
         }
         findViewById<Button>(R.id.sortMode).setOnClickListener {
             uiSort = when (uiSort) {
@@ -586,6 +600,7 @@ class ViopActivity : BaseActivity() {
                 UiSort.SIGNAL -> UiSort.CONFIDENCE
                 UiSort.CONFIDENCE -> UiSort.RANKING
             }
+            persistDashboardState()
             updateSortLabel()
             applyDashboardFilter()
         }
@@ -736,6 +751,7 @@ class ViopActivity : BaseActivity() {
             val button = findViewById<Button>(buttonId)
             button.backgroundTintList = ColorStateList.valueOf(if (selected) selectedColor else getColor(R.color.chip_bg))
             button.setTextColor(if (selected) Color.WHITE else getColor(R.color.text_primary))
+            button.contentDescription = button.text.toString() + if (selected) ", seçili" else ", seçili değil"
         }
         tint(R.id.filterAll, allSelected, getColor(R.color.green))
         tint(R.id.filterLong, uiDirection == UiDirection.LONG, getColor(R.color.green))
@@ -759,12 +775,51 @@ class ViopActivity : BaseActivity() {
     private fun shortDate(ms: Long) = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(ms))
 
     private fun updateSortLabel() {
-        findViewById<Button>(R.id.sortMode).text = when (uiSort) {
-            UiSort.RANKING -> "Sırala: Ranking"
-            UiSort.SIGNAL -> "Sırala: Sinyal"
-            UiSort.CONFIDENCE -> "Sırala: Güven"
+        findViewById<Button>(R.id.sortMode).apply {
+            text = when (uiSort) {
+                UiSort.RANKING -> "Sırala: Ranking"
+                UiSort.SIGNAL -> "Sırala: Sinyal"
+                UiSort.CONFIDENCE -> "Sırala: Güven"
+            }
+            contentDescription = "VİOP sıralama ölçütü: " + when (uiSort) {
+                UiSort.RANKING -> "Ranking"
+                UiSort.SIGNAL -> "Sinyal"
+                UiSort.CONFIDENCE -> "Güven"
+            }
         }
+        findViewById<Button>(R.id.detailedFilter).contentDescription = if (uiAdvancedFilters) "Detaylı filtreleri kapat" else "Detaylı filtreleri aç"
     }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(KEY_QUERY, uiQuery)
+        outState.putString(KEY_CATEGORY, uiCategory.name)
+        outState.putString(KEY_DIRECTION, uiDirection.name)
+        outState.putString(KEY_SORT, uiSort.name)
+        outState.putBoolean(KEY_ADVANCED, uiAdvancedFilters)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun restoreDashboardState(savedInstanceState: Bundle?) {
+        val prefs = getSharedPreferences(PREFS_DASHBOARD, MODE_PRIVATE)
+        uiQuery = savedInstanceState?.getString(KEY_QUERY) ?: prefs.getString(KEY_QUERY, "").orEmpty()
+        uiCategory = enumOrDefault(savedInstanceState?.getString(KEY_CATEGORY) ?: prefs.getString(KEY_CATEGORY, null), UiCategory.ALL)
+        uiDirection = enumOrDefault(savedInstanceState?.getString(KEY_DIRECTION) ?: prefs.getString(KEY_DIRECTION, null), UiDirection.ALL)
+        uiSort = enumOrDefault(savedInstanceState?.getString(KEY_SORT) ?: prefs.getString(KEY_SORT, null), UiSort.RANKING)
+        uiAdvancedFilters = savedInstanceState?.getBoolean(KEY_ADVANCED, prefs.getBoolean(KEY_ADVANCED, false)) ?: prefs.getBoolean(KEY_ADVANCED, false)
+    }
+
+    private fun persistDashboardState() {
+        getSharedPreferences(PREFS_DASHBOARD, MODE_PRIVATE).edit()
+            .putString(KEY_QUERY, uiQuery)
+            .putString(KEY_CATEGORY, uiCategory.name)
+            .putString(KEY_DIRECTION, uiDirection.name)
+            .putString(KEY_SORT, uiSort.name)
+            .putBoolean(KEY_ADVANCED, uiAdvancedFilters)
+            .apply()
+    }
+
+    private inline fun <reified T : Enum<T>> enumOrDefault(raw: String?, fallback: T): T =
+        enumValues<T>().firstOrNull { it.name == raw } ?: fallback
 
     private enum class UiCategory { ALL, INDEX, EQUITY, FX, COMMODITY, RATE }
     private enum class UiDirection { ALL, LONG, SHORT, WATCH }
@@ -772,6 +827,12 @@ class ViopActivity : BaseActivity() {
 
     companion object {
         private const val AUTO_TEST_COOLDOWN_MS = 30_000L
+        private const val PREFS_DASHBOARD = "viop_dashboard_state"
+        private const val KEY_QUERY = "query"
+        private const val KEY_CATEGORY = "category"
+        private const val KEY_DIRECTION = "direction"
+        private const val KEY_SORT = "sort"
+        private const val KEY_ADVANCED = "advanced_filters"
     }
 
 }
