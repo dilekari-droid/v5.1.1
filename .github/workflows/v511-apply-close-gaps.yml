@@ -1,0 +1,50 @@
+name: V5.1.1 Apply Close Gaps
+
+on:
+  push:
+    branches:
+      - hardening/v511-close-gaps-r1
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hardening:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact hardening branch
+        uses: actions/checkout@v4
+        with:
+          ref: hardening/v511-close-gaps-r1
+          fetch-depth: 0
+      - name: Apply verified V5.1.1 source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip -dc .github/tmp/v511-close-gaps.patch.gz > /tmp/v511-close-gaps.patch
+          git apply --check /tmp/v511-close-gaps.patch
+          git apply /tmp/v511-close-gaps.patch
+          rm -f .github/tmp/v511-close-gaps.patch.gz
+          rm -f .github/workflows/v511-apply-close-gaps.yml
+          python -m py_compile backend/main.py backend/e2e_smoke.py backend/e2e_provenance.py backend/benchmark_full_bist.py backend/preapk_readiness.py
+          (cd backend && PYTHONPATH=. pytest -q)
+          python - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          files = list(pathlib.Path('android/app/src/main/res/layout').glob('*.xml'))
+          for path in files:
+              ET.parse(path)
+          print(f'XML parse PASS: {len(files)} files')
+          PY
+          git diff --check
+          git status --short
+          test -n "$(git status --porcelain)"
+      - name: Commit hardened source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'hardening: close remaining source-fixable gaps'
+          git push origin HEAD:hardening/v511-close-gaps-r1
