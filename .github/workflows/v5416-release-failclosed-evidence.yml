@@ -1,0 +1,128 @@
+name: V5.4.16 Release Fail-Closed Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-release-failclosed-ca3f6aa
+    paths:
+      - '.github/workflows/v5416-release-failclosed-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  negative-release-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verify exact Android subtree provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_ANDROID_TREE='0882f7ffcdf52a13c8785ce8eeef9347d517febb'
+          ACTUAL_ANDROID_TREE="$(git rev-parse HEAD:android)"
+          echo "expectedAndroidTree=$EXPECTED_ANDROID_TREE"
+          echo "actualAndroidTree=$ACTUAL_ANDROID_TREE"
+          test "$ACTUAL_ANDROID_TREE" = "$EXPECTED_ANDROID_TREE"
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          ./android/gradlew --version
+
+      - name: Gate 1 - missing production HTTPS backend must fail before APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf android/app/build
+          set +e
+          env -u BORSA_BACKEND_URL -u BORSA_PRODUCTION_BACKEND_URL -u BORSA_ATTESTATION_PUBLIC_KEYS \
+            -u BORSA_KEYSTORE_PATH -u BORSA_STORE_PASSWORD -u BORSA_KEY_ALIAS -u BORSA_KEY_PASSWORD \
+            ./android/gradlew -p android --no-daemon :app:assembleRelease > /tmp/release-gate-backend.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -Fq 'Release/production build için BORSA_BACKEND_URL' /tmp/release-gate-backend.log
+          if find android/app/build -type f \( -name '*.apk' -o -name '*.aab' \) 2>/dev/null | grep -q .; then
+            echo 'APK/AAB unexpectedly produced while backend gate should fail' >&2
+            exit 1
+          fi
+
+      - name: Gate 2 - missing attestation public keys must fail before APK
+        shell: bash
+        env:
+          BORSA_BACKEND_URL: https://example.invalid
+        run: |
+          set -euo pipefail
+          rm -rf android/app/build
+          set +e
+          env -u BORSA_ATTESTATION_PUBLIC_KEYS -u BORSA_KEYSTORE_PATH -u BORSA_STORE_PASSWORD -u BORSA_KEY_ALIAS -u BORSA_KEY_PASSWORD \
+            ./android/gradlew -p android --no-daemon :app:assembleRelease > /tmp/release-gate-attestation.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -Fq 'Release/production build için BORSA_ATTESTATION_PUBLIC_KEYS zorunludur.' /tmp/release-gate-attestation.log
+          if find android/app/build -type f \( -name '*.apk' -o -name '*.aab' \) 2>/dev/null | grep -q .; then
+            echo 'APK/AAB unexpectedly produced while attestation gate should fail' >&2
+            exit 1
+          fi
+
+      - name: Gate 3 - missing secure signing env must fail before APK
+        shell: bash
+        env:
+          BORSA_BACKEND_URL: https://example.invalid
+          BORSA_ATTESTATION_PUBLIC_KEYS: tradewize:test-key:1:ZmFrZQ==
+        run: |
+          set -euo pipefail
+          rm -rf android/app/build
+          set +e
+          env -u BORSA_KEYSTORE_PATH -u BORSA_STORE_PASSWORD -u BORSA_KEY_ALIAS -u BORSA_KEY_PASSWORD \
+            ./android/gradlew -p android --no-daemon :app:assembleRelease > /tmp/release-gate-signing.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -Fq 'Release APK üretimi için güvenli imzalama değişkenleri zorunludur.' /tmp/release-gate-signing.log
+          if find android/app/build -type f \( -name '*.apk' -o -name '*.aab' \) 2>/dev/null | grep -q .; then
+            echo 'APK/AAB unexpectedly produced while signing gate should fail' >&2
+            exit 1
+          fi
+
+      - name: Write release fail-closed evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/v5416-release-failclosed-evidence.txt <<'EOF'
+          RESULT=PASS
+          ANDROID_TREE=0882f7ffcdf52a13c8785ce8eeef9347d517febb
+          BACKEND_URL_GATE=PASS_FAIL_CLOSED
+          ATTESTATION_PUBLIC_KEYS_GATE=PASS_FAIL_CLOSED
+          SECURE_SIGNING_GATE=PASS_FAIL_CLOSED
+          APK_AAB_PRODUCED=NO
+          RELEASE_APK_BUILT=NO
+          EOF
+          cat /tmp/v5416-release-failclosed-evidence.txt
+
+      - name: Upload negative release gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-RELEASE-FAILCLOSED-EVIDENCE
+          path: |
+            /tmp/v5416-release-failclosed-evidence.txt
+            /tmp/release-gate-backend.log
+            /tmp/release-gate-attestation.log
+            /tmp/release-gate-signing.log
+          if-no-files-found: warn
+          retention-days: 30
