@@ -2,8 +2,10 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -12,6 +14,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket
@@ -111,6 +114,8 @@ PROVIDER_WEIGHT_FORMULA_VERIFIED = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_V
 PROVIDER_WEIGHT_FORMULA_VERSION = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_VERSION", "").strip()
 PROVIDER_WEIGHT_FORMULA_SOURCE = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_SOURCE", "").strip()
 PROVIDER_WEIGHT_FORMULA_JSON = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_JSON", "").strip()
+ALLOWED_APP_ENVS = {"development", "test", "production"}
+SESSION_TOKEN_MAX_LENGTH = 4096
 
 # Canonical Android V5.4.16 dynamic-scanner wire contract. Public values stay lowercase.
 SUPPORTED_SCAN_INTERVALS = {"1m", "3m", "5m", "10m", "15m", "30m", "60m", "1d"}
@@ -125,7 +130,7 @@ FEATURE_CAPABILITIES = {
     "attestationReady": False,
     "attestationConfigured": bool(ATTESTATION_PRIVATE_KEYS_JSON and ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION > 0),
     # Real VİOP contract metadata must be configured explicitly; quotes alone are insufficient.
-    "viopContractsReady": bool(VIOP_CONTRACT_METADATA_PATH),
+    "viopContractsReady": False,
     # Reserved until a real persistent webhook/research backend is wired.
     "tradingViewSignals": bool(TRADINGVIEW_WEBHOOK_SECRET and TRADINGVIEW_DB_PATH),
     "researchFoundation": False,
@@ -144,6 +149,26 @@ FEATURE_CAPABILITIES = {
     "fullBistFiveMinuteSla": False,
 }
 
+def _validate_https_upstream_base(raw: str) -> None:
+    """Reject malformed/private provider origins before any credential-bearing request is sent."""
+    try:
+        parsed = urlsplit(raw.strip())
+        hostname = (parsed.hostname or "").strip().lower().rstrip(".")
+        _ = parsed.port  # raises ValueError for malformed ports
+    except ValueError as exc:
+        raise RuntimeError("TRADEWIZE_BASE_URL must be a valid HTTPS origin") from exc
+    if parsed.scheme.lower() != "https" or not hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise RuntimeError("TRADEWIZE_BASE_URL must be a clean HTTPS origin without credentials/query/fragment")
+    if hostname == "localhost" or hostname.endswith(".localhost") or hostname in {"127.0.0.1", "0.0.0.0", "::1", "10.0.2.2"}:
+        raise RuntimeError("TRADEWIZE_BASE_URL cannot target localhost/emulator addresses")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return
+    if address.is_loopback or address.is_private or address.is_link_local or address.is_unspecified or address.is_reserved or address.is_multicast:
+        raise RuntimeError("TRADEWIZE_BASE_URL cannot target a private/reserved IP literal")
+
+
 def _secret_strength_ok(value: str) -> bool:
     if len(value) < SESSION_TOKEN_MIN_SECRET_LENGTH:
         return False
@@ -157,6 +182,11 @@ def _secret_strength_ok(value: str) -> bool:
 
 
 def _validate_startup_configuration() -> None:
+    if APP_ENV not in ALLOWED_APP_ENVS:
+        raise RuntimeError(f"APP_ENV must be one of {sorted(ALLOWED_APP_ENVS)}")
+    _validate_https_upstream_base(UPSTREAM)
+    if VIOP_CONTRACT_METADATA_PATH and (not VIOP_CONTRACT_METADATA_PATH.startswith("/") or "://" in VIOP_CONTRACT_METADATA_PATH or ".." in VIOP_CONTRACT_METADATA_PATH.split("/")):
+        raise RuntimeError("TRADEWIZE_VIOP_CONTRACT_METADATA_PATH must be a provider-relative absolute path")
     if UPSTREAM_QUOTA_SCOPE not in {"all", "bars_only"}:
         raise RuntimeError("UPSTREAM_QUOTA_SCOPE must be all or bars_only")
     if UPSTREAM_DISTRIBUTED_QUOTA and not REDIS_URL:
@@ -175,12 +205,27 @@ def _validate_startup_configuration() -> None:
     attestation_parts = [bool(ATTESTATION_PRIVATE_KEYS_JSON), bool(ATTESTATION_ACTIVE_KEY_ID), ATTESTATION_ACTIVE_KEY_GENERATION > 0]
     if any(attestation_parts) and not all(attestation_parts):
         raise RuntimeError("ATTESTATION_PRIVATE_KEYS_JSON, ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION must be configured together")
+    if all(attestation_parts):
+        try:
+            configured_keys = _parse_attestation_keys()
+            active_key = (ATTESTATION_ACTIVE_KEY_ID, ATTESTATION_ACTIVE_KEY_GENERATION)
+            if active_key not in configured_keys:
+                raise RuntimeError("Active attestation key id/generation is not present in ATTESTATION_PRIVATE_KEYS_JSON")
+            _load_attestation_private_key(*active_key)
+        except (ValueError, RuntimeError) as exc:
+            raise RuntimeError(f"Attestation signing configuration is invalid: {exc}") from exc
     if APP_ENV != "production":
         return
     if not APP_API_KEY:
         raise RuntimeError("APP_API_KEY is required when APP_ENV=production")
+    if not _secret_strength_ok(APP_API_KEY):
+        raise RuntimeError("APP_API_KEY is too weak for production")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", SESSION_TOKEN_KEY_ID):
+        raise RuntimeError("SESSION_TOKEN_KEY_ID must be 1-64 safe identifier characters")
     if not _secret_strength_ok(SESSION_TOKEN_SECRET):
         raise RuntimeError("SESSION_TOKEN_SECRET is missing or too weak for production")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", DEPLOYMENT_REVISION):
+        raise RuntimeError("Production deployment revision must be an exact 40-character Git SHA")
     try:
         previous_keys = _parse_previous_session_keys()
     except ValueError as exc:
@@ -223,7 +268,14 @@ async def _lifespan(_: FastAPI):
             _persist_session_revocations_to_disk()
 
 
-app = FastAPI(title=APP_NAME, version=APP_VERSION, lifespan=_lifespan)
+app = FastAPI(
+    title=APP_NAME,
+    version=APP_VERSION,
+    lifespan=_lifespan,
+    docs_url=None if APP_ENV == "production" else "/docs",
+    redoc_url=None if APP_ENV == "production" else "/redoc",
+    openapi_url=None if APP_ENV == "production" else "/openapi.json",
+)
 
 _ingress_lock = asyncio.Lock()
 _ingress_buckets: dict[str, dict[str, float]] = {}
@@ -486,7 +538,7 @@ def _issue_session_token(installation_id: str) -> tuple[str, int]:
 
 
 def _verify_session_token(token: str, expected_installation_id: str | None = None) -> bool:
-    if "." not in token:
+    if not token or len(token) > SESSION_TOKEN_MAX_LENGTH or "." not in token:
         return False
     body, signature = token.split(".", 1)
     try:
@@ -622,6 +674,20 @@ def _load_attestation_private_key(key_id: str, generation: int):
         raise RuntimeError("Attestation private key is invalid") from exc
 
 
+def _attestation_configuration_valid() -> bool:
+    if not (ATTESTATION_PRIVATE_KEYS_JSON and ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION > 0):
+        return False
+    try:
+        keys = _parse_attestation_keys()
+        active = (ATTESTATION_ACTIVE_KEY_ID, ATTESTATION_ACTIVE_KEY_GENERATION)
+        if active not in keys:
+            return False
+        _load_attestation_private_key(*active)
+        return True
+    except (ValueError, RuntimeError):
+        return False
+
+
 def _v538_canonical(envelope: dict[str, Any]) -> str:
     return "\n".join([
         "schema=V538_ATTESTATION_V1",
@@ -665,7 +731,17 @@ async def _sign_v538_attestation(
     """
     if not (ATTESTATION_PRIVATE_KEYS_JSON and ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION > 0):
         raise HTTPException(status_code=503, detail="ATTESTATION_NOT_CONFIGURED")
-    if not snapshot_hash or len(snapshot_hash.strip()) < 32 or not request_id.strip() or not snapshot_id.strip():
+    clean_hash = snapshot_hash.strip().lower()
+    clean_request_id = request_id.strip()
+    clean_snapshot_id = snapshot_id.strip()
+    clean_engine = calculation_engine_version.strip()
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", clean_hash) is None
+        or not (1 <= len(clean_request_id) <= 128)
+        or not (1 <= len(clean_snapshot_id) <= 128)
+        or not (1 <= len(clean_engine) <= 64)
+        or int(generated_at) <= 0
+    ):
         raise HTTPException(status_code=400, detail="ATTESTATION_ENVELOPE_INVALID")
     global _attestation_sequence
     async with _attestation_lock:
@@ -678,9 +754,9 @@ async def _sign_v538_attestation(
         expires_at = now_ms + ATTESTATION_TTL_MS
         _attestation_recent_nonces[nonce] = expires_at
         envelope = {
-            "snapshotHash": snapshot_hash.strip().lower(),
-            "requestId": request_id.strip(),
-            "snapshotId": snapshot_id.strip(),
+            "snapshotHash": clean_hash,
+            "requestId": clean_request_id,
+            "snapshotId": clean_snapshot_id,
             "providerId": ATTESTATION_PROVIDER_ID,
             "attestationKeyId": ATTESTATION_ACTIVE_KEY_ID,
             "attestationKeyGeneration": ATTESTATION_ACTIVE_KEY_GENERATION,
@@ -690,7 +766,7 @@ async def _sign_v538_attestation(
             "generatedAt": int(generated_at),
             "serverSequence": _attestation_sequence,
             "nonce": nonce,
-            "calculationEngineVersion": calculation_engine_version.strip(),
+            "calculationEngineVersion": clean_engine,
             "issuedAt": now_ms,
             "expiresAt": expires_at,
         }
@@ -725,7 +801,7 @@ async def get_upstream_access_token(force_refresh: bool = False) -> str:
                 json={"grant_type": "api_key"},
             )
         if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail=f"UPSTREAM_AUTH_HTTP_{response.status_code}: {response.text[:500]}")
+            raise HTTPException(status_code=502, detail=f"UPSTREAM_AUTH_HTTP_{response.status_code}")
         payload = response.json()
         token = payload.get("access_token") if isinstance(payload, dict) else None
         if not token:
@@ -760,7 +836,7 @@ async def _raw_upstream_get(path: str, params: dict[str, Any] | None = None) -> 
                 headers=headers,
             )
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"UPSTREAM_HTTP_{response.status_code}: {response.text[:500]}")
+        raise HTTPException(status_code=502, detail=f"UPSTREAM_HTTP_{response.status_code}")
     return response
 
 
@@ -893,7 +969,9 @@ async def _get_redis_quota_client():
         import redis.asyncio as redis_async
     except ImportError as exc:
         raise RuntimeError("redis package is required for distributed quota mode") from exc
-    _redis_quota_client = redis_async.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+    _redis_quota_client = redis_async.from_url(
+        REDIS_URL, encoding="utf-8", decode_responses=True, socket_connect_timeout=5.0, socket_timeout=5.0, health_check_interval=30
+    )
     return _redis_quota_client
 
 
@@ -902,14 +980,17 @@ async def _distributed_quota_wait(weight: int) -> None:
         return
     client = await _get_redis_quota_client()
     while True:
-        result = await client.eval(
-            _DISTRIBUTED_QUOTA_LUA,
-            1,
-            UPSTREAM_DISTRIBUTED_QUOTA_KEY,
-            max(1, int(weight)),
-            SCANNER_RATE_LIMIT_WEIGHT_PER_MINUTE,
-            SCANNER_REQUESTS_PER_HOUR,
-        )
+        try:
+            result = await client.eval(
+                _DISTRIBUTED_QUOTA_LUA,
+                1,
+                UPSTREAM_DISTRIBUTED_QUOTA_KEY,
+                max(1, int(weight)),
+                SCANNER_RATE_LIMIT_WEIGHT_PER_MINUTE,
+                SCANNER_REQUESTS_PER_HOUR,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="DISTRIBUTED_QUOTA_UNAVAILABLE") from exc
         allowed = bool(int(result[0]))
         wait_ms = max(0, int(result[1]))
         if allowed:
@@ -923,7 +1004,10 @@ async def _extend_distributed_cooldown(seconds: float) -> None:
     if not UPSTREAM_DISTRIBUTED_QUOTA or seconds <= 0:
         return
     client = await _get_redis_quota_client()
-    await client.eval(_DISTRIBUTED_COOLDOWN_LUA, 1, UPSTREAM_DISTRIBUTED_QUOTA_KEY, float(seconds))
+    try:
+        await client.eval(_DISTRIBUTED_COOLDOWN_LUA, 1, UPSTREAM_DISTRIBUTED_QUOTA_KEY, float(seconds))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="DISTRIBUTED_QUOTA_UNAVAILABLE") from exc
     _provider_quota_metrics["distributedCooldownExtensions"] = int(_provider_quota_metrics.get("distributedCooldownExtensions", 0)) + 1
 
 
@@ -2213,7 +2297,12 @@ async def provider_capabilities(force: bool = False) -> dict[str, Any]:
         "ok": True, "version": APP_VERSION, "provider": "TradeWize", "primaryConfiguredProvider": "TradeWize", "providerConfigured": configured,
         "providerReady": False, "globalProviderReady": False, "multiMarketReady": False, "bistReady": False, "checkedAt": int(time.time() * 1000),
         "tradeWize": {"state": "CONFIGURED" if configured else "NOT_CONFIGURED", "adapterVerified": True},
-        "features": {**FEATURE_CAPABILITIES, "tradingViewSignals": bool(TRADINGVIEW_WEBHOOK_SECRET and TRADINGVIEW_DB_PATH)},
+        "features": {
+            **FEATURE_CAPABILITIES,
+            "attestationConfigured": _attestation_configuration_valid(),
+            "viopContractsReady": False,
+            "tradingViewSignals": bool(TRADINGVIEW_WEBHOOK_SECRET and TRADINGVIEW_DB_PATH),
+        },
         "scanPolicy": {
             "snapshotBatchMaxSymbols": SNAPSHOT_BATCH_MAX_SYMBOLS,
             "snapshotBatchReadTimeoutMs": SNAPSHOT_BATCH_READ_TIMEOUT_MS,
@@ -2862,7 +2951,7 @@ async def realtime_opportunities(
             "message": "V538 attestation/replay sözleşmesi backend tarafında etkin değil; dinamik scanner sonucu realtime diye yükseltilmez.",
             "realtime": False,
             "attestationReady": False,
-            "attestationConfigured": bool(ATTESTATION_PRIVATE_KEYS_JSON and ATTESTATION_ACTIVE_KEY_ID and ATTESTATION_ACTIVE_KEY_GENERATION > 0),
+            "attestationConfigured": _attestation_configuration_valid(),
         },
     )
 

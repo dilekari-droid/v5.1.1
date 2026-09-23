@@ -40,8 +40,9 @@ def test_readiness_never_exposes_secret_values(monkeypatch):
 
 def test_production_startup_validation_reports_missing_provider_credential(monkeypatch):
     monkeypatch.setattr(main, "APP_ENV", "production")
-    monkeypatch.setattr(main, "APP_API_KEY", "bootstrap-key-present")
+    monkeypatch.setattr(main, "APP_API_KEY", "V5416-Strong-App-Api-Key-2026!Alpha")
     monkeypatch.setattr(main, "SESSION_TOKEN_SECRET", "Very-Strong-Session-Secret-2026!A")
+    monkeypatch.setattr(main, "DEPLOYMENT_REVISION", "a" * 40)
     monkeypatch.setattr(main, "TRADEWIZE_API_KEY", "")
     monkeypatch.setattr(main, "UPSTREAM_ACCESS_TOKEN", "")
     payload = preapk_readiness.collect_readiness(validate_startup=True)

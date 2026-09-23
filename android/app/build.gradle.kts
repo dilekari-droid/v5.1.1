@@ -81,10 +81,10 @@ android {
             if (isReleaseTaskRequested) {
                 check(defaultBackendUrl.isNotBlank()) { "Release/production build için BORSA_BACKEND_URL veya -Pborsa.backendUrl zorunludur." }
                 val releaseUri = runCatching { URI(defaultBackendUrl) }.getOrNull()
-                check(releaseUri != null && releaseUri.scheme.equals("https", ignoreCase = true) && !releaseUri.host.isNullOrBlank() && releaseUri.userInfo == null && releaseUri.fragment == null) {
+                check(releaseUri != null && releaseUri.scheme.equals("https", ignoreCase = true) && !releaseUri.host.isNullOrBlank() && releaseUri.userInfo == null && releaseUri.fragment == null && releaseUri.rawQuery == null) {
                     "Release/production backend URL geçerli bir HTTPS adresi olmalıdır."
                 }
-                check(releaseUri.host !in setOf("localhost", "127.0.0.1", "10.0.2.2")) { "Release/production backend localhost/emülatör adresi olamaz." }
+                check(releaseUri.host.lowercase().removePrefix("[").removeSuffix("]") !in setOf("localhost", "127.0.0.1", "0.0.0.0", "::1", "10.0.2.2")) { "Release/production backend localhost/emülatör adresi olamaz." }
                 check(attestationPublicKeys.isNotBlank()) { "Release/production build için BORSA_ATTESTATION_PUBLIC_KEYS zorunludur." }
                 check(attestationPublicKeys.split(';').filter { it.isNotBlank() }.all { entry ->
                     val parts = entry.split(':', limit = 4)

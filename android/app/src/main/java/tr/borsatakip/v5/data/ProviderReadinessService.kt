@@ -247,11 +247,7 @@ class ProviderReadinessService(context: Context) {
     companion object {
         const val READY_TTL_MS: Long = 5 * 60_000L
 
-        fun isValidHttps(raw: String): Boolean = runCatching {
-            val uri = URI(raw.trim())
-            uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.fragment == null &&
-                uri.host !in setOf("localhost", "127.0.0.1", "10.0.2.2")
-        }.getOrDefault(false)
+        fun isValidHttps(raw: String): Boolean = BackendUrlPolicy.isValidHttps(raw)
 
         private fun mapFailure(kind: BackendPreflightClient.FailureKind): ProviderFailureCode = when (kind) {
             BackendPreflightClient.FailureKind.NONE -> ProviderFailureCode.NONE

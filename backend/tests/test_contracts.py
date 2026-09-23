@@ -672,7 +672,8 @@ def test_android_batch_timeout_matches_backend_queued_pacing_budget():
 
 def test_production_startup_requires_strong_session_secret_and_provider_credentials(monkeypatch):
     monkeypatch.setattr(main, "APP_ENV", "production")
-    monkeypatch.setattr(main, "APP_API_KEY", "bootstrap-key")
+    monkeypatch.setattr(main, "APP_API_KEY", "V5416-Strong-App-Api-Key-2026!Alpha")
+    monkeypatch.setattr(main, "DEPLOYMENT_REVISION", "a" * 40)
     monkeypatch.setattr(main, "TRADEWIZE_API_KEY", "provider-key")
     monkeypatch.setattr(main, "UPSTREAM_ACCESS_TOKEN", "")
     monkeypatch.setattr(main, "SESSION_TOKEN_SECRET", "")
@@ -1471,3 +1472,77 @@ def test_production_e2e_uses_configured_target_and_protected_session_route():
     assert 'session_client.get("/v1/provider/capabilities")' in smoke
     assert 'session_client.get("/v1/health")' not in smoke
     assert "live /v1/health revision must be a full 40-hex Git SHA" in smoke
+
+
+def test_startup_rejects_unknown_environment_and_unsafe_upstream(monkeypatch):
+    monkeypatch.setattr(main, "APP_ENV", "prod")
+    with pytest.raises(RuntimeError, match="APP_ENV"):
+        main._validate_startup_configuration()
+
+    monkeypatch.setattr(main, "APP_ENV", "development")
+    monkeypatch.setattr(main, "UPSTREAM", "http://127.0.0.1:8080")
+    with pytest.raises(RuntimeError, match="TRADEWIZE_BASE_URL"):
+        main._validate_startup_configuration()
+
+
+def test_production_requires_exact_git_revision_strong_app_key_and_safe_key_id(monkeypatch):
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "UPSTREAM", "https://api.tradewize.com.tr")
+    monkeypatch.setattr(main, "APP_API_KEY", "V5416-Strong-App-Api-Key-2026!Alpha")
+    monkeypatch.setattr(main, "SESSION_TOKEN_SECRET", "V5416-Strong-Session-Secret-2026!Alpha")
+    monkeypatch.setattr(main, "SESSION_TOKEN_KEY_ID", "v1")
+    monkeypatch.setattr(main, "TRADEWIZE_API_KEY", "provider-key")
+    monkeypatch.setattr(main, "UPSTREAM_ACCESS_TOKEN", "")
+    monkeypatch.setattr(main, "DEPLOYMENT_REVISION", "short")
+    with pytest.raises(RuntimeError, match="40-character Git SHA"):
+        main._validate_startup_configuration()
+    monkeypatch.setattr(main, "DEPLOYMENT_REVISION", "b" * 40)
+    monkeypatch.setattr(main, "SESSION_TOKEN_KEY_ID", "bad key id")
+    with pytest.raises(RuntimeError, match="SESSION_TOKEN_KEY_ID"):
+        main._validate_startup_configuration()
+
+
+def test_session_token_parser_rejects_oversized_input_without_decoding(monkeypatch):
+    monkeypatch.setattr(main, "SESSION_TOKEN_SECRET", "V5416-Strong-Session-Secret-2026!Alpha")
+    assert main._verify_session_token("a" * (main.SESSION_TOKEN_MAX_LENGTH + 1) + ".b") is False
+
+
+def test_attestation_startup_rejects_missing_active_key_and_invalid_private_key(monkeypatch):
+    monkeypatch.setattr(main, "APP_ENV", "development")
+    monkeypatch.setattr(main, "ATTESTATION_PRIVATE_KEYS_JSON", json.dumps({"other": {"generation": 1, "privateKeyBase64": "ZmFrZQ=="}}))
+    monkeypatch.setattr(main, "ATTESTATION_ACTIVE_KEY_ID", "kid-a")
+    monkeypatch.setattr(main, "ATTESTATION_ACTIVE_KEY_GENERATION", 1)
+    with pytest.raises(RuntimeError, match="Attestation signing configuration is invalid"):
+        main._validate_startup_configuration()
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_body_is_not_reflected_to_clients(monkeypatch):
+    class Response:
+        status_code = 500
+        text = "provider-secret-diagnostic-token=never-reflect"
+        headers = {}
+        def json(self): return {}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def get(self, *args, **kwargs): return Response()
+
+    async def token(force_refresh=False): return "token"
+    monkeypatch.setattr(main, "get_upstream_access_token", token)
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda *args, **kwargs: Client())
+    with pytest.raises(main.HTTPException) as exc:
+        await main._raw_upstream_get("/api/v1/market-data/bars", {})
+    assert exc.value.detail == "UPSTREAM_HTTP_500"
+    assert "provider-secret" not in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_attestation_rejects_non_sha256_snapshot_hash(monkeypatch):
+    monkeypatch.setattr(main, "ATTESTATION_PRIVATE_KEYS_JSON", '{"kid-a":{"generation":1,"privateKeyBase64":"ZmFrZQ=="}}')
+    monkeypatch.setattr(main, "ATTESTATION_ACTIVE_KEY_ID", "kid-a")
+    monkeypatch.setattr(main, "ATTESTATION_ACTIVE_KEY_GENERATION", 1)
+    with pytest.raises(main.HTTPException) as exc:
+        await main._sign_v538_attestation(snapshot_hash="not-a-sha256", request_id="r", snapshot_id="s", calculation_engine_version="V5.4.16", generated_at=1)
+    assert exc.value.status_code == 400

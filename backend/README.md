@@ -1,3 +1,5 @@
+Production additionally requires an exact 40-character Git deployment revision and rejects unknown `APP_ENV` values, unsafe/non-HTTPS TradeWize origins, weak app bootstrap keys, malformed session key IDs, and invalid attestation key selections before serving traffic. Upstream error bodies are never reflected to clients.
+
 # Production backend
 
 FastAPI adapter for the Android V5.4.16 contract. The backend separates global multi-market readiness from market-specific readiness, implements the classic BIST snapshot-batch contract, and keeps stale data in delayed/observation mode. Dynamic closed-bar scanning remains on `/v1/scanner/opportunities`; V538 canonical ECDSA signing/key-rotation infrastructure is implemented, but attested realtime REST/WebSocket features remain explicitly fail-closed until a real provider stream and real-device/E2E attestation path are verified.

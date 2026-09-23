@@ -17,6 +17,14 @@ def _bool(value: object) -> bool:
     return bool(value)
 
 
+
+def _upstream_policy_valid() -> bool:
+    try:
+        main._validate_https_upstream_base(main.UPSTREAM)
+        return True
+    except RuntimeError:
+        return False
+
 def collect_readiness(*, validate_startup: bool = False) -> dict[str, Any]:
     startup_error: str | None = None
     if validate_startup:
@@ -36,6 +44,8 @@ def collect_readiness(*, validate_startup: bool = False) -> dict[str, Any]:
 
     production_config = {
         "appEnvProduction": main.APP_ENV == "production",
+        "deploymentRevisionIsGitSha": bool(__import__("re").fullmatch(r"[0-9a-fA-F]{40}", main.DEPLOYMENT_REVISION)),
+        "upstreamHttpsPolicyValid": _upstream_policy_valid(),
         "appApiKeyConfigured": _bool(main.APP_API_KEY),
         "sessionSecretStrong": main._secret_strength_ok(main.SESSION_TOKEN_SECRET),
         "tradeWizeCredentialConfigured": _bool(main.TRADEWIZE_API_KEY or main.UPSTREAM_ACCESS_TOKEN),
@@ -44,18 +54,14 @@ def collect_readiness(*, validate_startup: bool = False) -> dict[str, Any]:
         "tradingViewConfigured": _bool(main.TRADINGVIEW_WEBHOOK_SECRET and main.TRADINGVIEW_DB_PATH),
         "providerWeightFormulaConfigured": _bool(main._provider_weight_formula_is_verified()),
         "viopPaginationConfigured": _bool(main.VIOP_METADATA_PAGE_SIZE > 0 and main.VIOP_METADATA_MAX_PAGES > 0),
-        "attestationSigningConfigured": _bool(
-            main.ATTESTATION_PRIVATE_KEYS_JSON
-            and main.ATTESTATION_ACTIVE_KEY_ID
-            and main.ATTESTATION_ACTIVE_KEY_GENERATION > 0
-        ),
+        "attestationSigningConfigured": _bool(main._attestation_configuration_valid()),
     }
 
     external_gates = {
         "providerWeightFormulaVerified": _bool(main._provider_weight_formula_is_verified()),
         "realtimeProviderE2EPassed": _bool(main.FEATURE_CAPABILITIES.get("realtimeScannerRest")),
         "realDeviceAttestationE2EPassed": _bool(main.FEATURE_CAPABILITIES.get("attestationReady")),
-        "viopContractMetadataReady": _bool(main.FEATURE_CAPABILITIES.get("viopContractsReady")),
+        "viopContractMetadataReady": False,
         "researchBackendReady": _bool(main.FEATURE_CAPABILITIES.get("researchFoundation")),
         "allTimeHistoryVerified": _bool(main.FEATURE_CAPABILITIES.get("allTimeHistory")),
         "fullBistFiveMinuteSlaVerified": _bool(main.FEATURE_CAPABILITIES.get("fullBistFiveMinuteSla")),

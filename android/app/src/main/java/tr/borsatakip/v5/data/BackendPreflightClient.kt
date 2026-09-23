@@ -236,11 +236,7 @@ class BackendPreflightClient(private val context: Context) {
     }
 
     companion object {
-        fun validHttps(raw: String): Boolean = runCatching {
-            val uri = URI(raw.trim())
-            uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.fragment == null &&
-                uri.host !in setOf("localhost", "127.0.0.1", "10.0.2.2")
-        }.getOrDefault(false)
+        fun validHttps(raw: String): Boolean = BackendUrlPolicy.isValidHttps(raw)
 
         private const val MAX_VIOP_PREFLIGHT_CANDIDATES = 8
     }
