@@ -1,0 +1,191 @@
+name: V5.4.16 Cache Ingress Stress Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-cache-ingress-stress
+    paths:
+      - '.github/workflows/v5416-cache-ingress-stress-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stress-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Verify exact backend subtree provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_BACKEND_TREE='d3821ba8704697e1744eb188883e8e85bdc65233'
+          ACTUAL_BACKEND_TREE="$(git rev-parse HEAD:backend)"
+          echo "expectedBackendTree=$EXPECTED_BACKEND_TREE"
+          echo "actualBackendTree=$ACTUAL_BACKEND_TREE"
+          test "$ACTUAL_BACKEND_TREE" = "$EXPECTED_BACKEND_TREE"
+
+      - name: Install backend test dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Re-run full backend suite on exact backend tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd backend && PYTHONPATH=. pytest -q)
+
+      - name: Run deterministic cache and ingress stress evidence
+        shell: bash
+        env:
+          EXPECTED_BACKEND_TREE: d3821ba8704697e1744eb188883e8e85bdc65233
+          STRESS_EVIDENCE_PATH: /tmp/v5416-cache-ingress-stress-evidence.json
+        run: |
+          set -euo pipefail
+          PYTHONPATH=backend python - <<'PY'
+          import asyncio
+          import json
+          import subprocess
+          import time
+          from pathlib import Path
+
+          import main
+
+          expected_tree = "d3821ba8704697e1744eb188883e8e85bdc65233"
+          actual_tree = subprocess.check_output(
+              ["git", "rev-parse", "HEAD:backend"], text=True
+          ).strip()
+          if actual_tree != expected_tree:
+              raise SystemExit(f"backend tree mismatch: {actual_tree} != {expected_tree}")
+
+          started = time.monotonic()
+
+          # High-volume cache churn against strict bounds.
+          main.BAR_CACHE_MAX_BARS = 50
+          main.BAR_CACHE_MAX_KEYS = 128
+          main.BAR_CACHE_MAX_TOTAL_BARS = 4096
+          main.BAR_CACHE_IDLE_TTL_SECONDS = 60
+          main._bar_series_cache.clear()
+          main._bar_series_locks.clear()
+
+          base = 1_700_000_000_000
+          sample = [
+              {
+                  "timestamp": base + i * 60_000,
+                  "open": 100.0,
+                  "high": 101.0,
+                  "low": 99.0,
+                  "close": 100.5,
+                  "volume": 1000.0,
+              }
+              for i in range(50)
+          ]
+          now = time.time()
+          peak_cache_keys = 0
+          peak_cached_bars = 0
+          cache_insertions = 5_000
+
+          for idx in range(cache_insertions):
+              key = ("BIST", f"STRESS{idx:05d}", "5m")
+              main._store_bar_cache(key, now + idx * 0.001, sample)
+              current_keys = len(main._bar_series_cache)
+              current_bars = sum(
+                  len(entry.get("candles") or [])
+                  for entry in main._bar_series_cache.values()
+              )
+              peak_cache_keys = max(peak_cache_keys, current_keys)
+              peak_cached_bars = max(peak_cached_bars, current_bars)
+              assert current_keys <= main.BAR_CACHE_MAX_KEYS
+              assert current_bars <= main.BAR_CACHE_MAX_TOTAL_BARS
+
+          # Independent idle-TTL cleanup must release all stale cache state.
+          main._prune_bar_cache(now + 10_000)
+          assert len(main._bar_series_cache) == 0
+          assert all(not lock.locked() for lock in main._bar_series_locks.values())
+
+          # High-volume ingress churn under a hard state cap.
+          main.INGRESS_BUCKET_MAX_ENTRIES = 128
+          main.INGRESS_BUCKET_TTL_SECONDS = 10_000
+          main.INGRESS_RATE_LIMIT_BURST = 1_000_000
+          main.INGRESS_RATE_LIMIT_RPS = 1_000_000
+          main._ingress_buckets.clear()
+
+          class Client:
+              host = "203.0.113.42"
+
+          class URL:
+              path = "/v1/health"
+
+          class RequestStub:
+              client = Client()
+              url = URL()
+
+              def __init__(self, install_id: str):
+                  self.headers = {
+                      "x-install-id": install_id,
+                      "authorization": "Bearer stress-evidence-token",
+                  }
+
+          ingress_requests = 10_000
+          peak_ingress_buckets = 0
+
+          async def run_ingress() -> None:
+              nonlocal_peak = [0]
+              for idx in range(ingress_requests):
+                  allowed, _, _ = await main._consume_ingress_token(
+                      RequestStub(f"stress-install-{idx:05d}")
+                  )
+                  assert allowed is True
+                  current = len(main._ingress_buckets)
+                  nonlocal_peak[0] = max(nonlocal_peak[0], current)
+                  assert current <= main.INGRESS_BUCKET_MAX_ENTRIES
+              return nonlocal_peak[0]
+
+          peak_ingress_buckets = asyncio.run(run_ingress())
+
+          elapsed_ms = int((time.monotonic() - started) * 1000)
+          evidence = {
+              "schemaVersion": 1,
+              "result": "PASS",
+              "sourceCommit": subprocess.check_output(
+                  ["git", "rev-parse", "HEAD"], text=True
+              ).strip(),
+              "backendTree": actual_tree,
+              "expectedBackendTree": expected_tree,
+              "cache": {
+                  "insertions": cache_insertions,
+                  "maxKeys": main.BAR_CACHE_MAX_KEYS,
+                  "maxTotalBars": main.BAR_CACHE_MAX_TOTAL_BARS,
+                  "perSeriesMaxBars": main.BAR_CACHE_MAX_BARS,
+                  "peakKeys": peak_cache_keys,
+                  "peakBars": peak_cached_bars,
+                  "afterIdleTtlKeys": len(main._bar_series_cache),
+              },
+              "ingress": {
+                  "requests": ingress_requests,
+                  "maxEntries": main.INGRESS_BUCKET_MAX_ENTRIES,
+                  "peakBuckets": peak_ingress_buckets,
+                  "finalBuckets": len(main._ingress_buckets),
+              },
+              "elapsedMs": elapsed_ms,
+          }
+          target = Path("/tmp/v5416-cache-ingress-stress-evidence.json")
+          target.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+          print(target.read_text(), end="")
+          PY
+
+      - name: Upload stress evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-CACHE-INGRESS-STRESS-EVIDENCE
+          path: /tmp/v5416-cache-ingress-stress-evidence.json
+          if-no-files-found: error
+          retention-days: 30
