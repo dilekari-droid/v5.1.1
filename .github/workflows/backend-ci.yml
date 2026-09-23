@@ -1,0 +1,93 @@
+name: Production Backend V5.4.16 CI
+
+on:
+  push:
+    branches: [main, v5.4.16-report-completion, v5.4.16-full-hardening, v5.4.16-final-hardening-13]
+    paths:
+      - 'backend/**'
+      - 'contracts/**'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/android-build.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'contracts/**'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/android-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: V5.4.16 R7 contract and security gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'ENGINE_VERSION = "V5.4.16"' backend/main.py
+          grep -Fq 'SESSION_TOKEN_SECRET' backend/main.py
+          grep -Fq 'SESSION_TOKEN_MIN_SECRET_LENGTH' backend/main.py
+          grep -Fq 'shortLivedSessionAuth' backend/main.py
+          grep -Fq 'ALL_TIME_HISTORY_VERIFIED' backend/main.py
+          grep -Fq 'viopContractsReady' backend/main.py
+          grep -Fq 'attestationReady' backend/main.py
+          grep -Fq 'providerWeightFormulaVerified' backend/main.py
+          grep -Fq 'SCANNER_REQUESTS_PER_HOUR' backend/main.py
+          grep -Fq 'UPSTREAM_QUOTA_SCOPE' backend/main.py
+          grep -Fq 'UPSTREAM_DISTRIBUTED_QUOTA' backend/main.py
+          grep -Fq 'UPSTREAM_DISTRIBUTED_QUOTA_KEY' backend/main.py
+          grep -Fq '_retry_after_seconds' backend/main.py
+          grep -Fq '_provider_quota_metrics' backend/main.py
+          grep -Fq 'INGRESS_BUCKET_TTL_SECONDS' backend/main.py
+          grep -Fq 'INGRESS_BUCKET_MAX_ENTRIES' backend/main.py
+          grep -Fq '_ingress_metrics' backend/main.py
+          grep -Fq 'BAR_CACHE_IDLE_TTL_SECONDS' backend/main.py
+          grep -Fq 'BAR_CACHE_MAX_TOTAL_BARS' backend/main.py
+          grep -Fq 'BAR_CACHE_PERSIST_PATH' backend/main.py
+          grep -Fq 'BAR_CACHE_PREWARM_SYMBOLS' backend/main.py
+          grep -Fq 'SNAPSHOT_BATCH_MAX_SYMBOLS' backend/main.py
+          grep -Fq 'SNAPSHOT_BATCH_READ_TIMEOUT_MS' backend/main.py
+          grep -Fq 'SNAPSHOT_BATCH_IDEMPOTENCY_TTL_SECONDS' backend/main.py
+          grep -Fq 'VIOP_METADATA_MAX_AGE_SECONDS' backend/main.py
+          grep -Fq 'VIOP_METADATA_REQUIRE_COMPLETE' backend/main.py
+          grep -Fq 'VIOP_NEAR_EXPIRY_DAYS' backend/main.py
+          grep -Fq 'SESSION_TOKEN_PREVIOUS_KEYS_JSON' backend/main.py
+          grep -Fq 'SESSION_REVOKE_STORE_PATH' backend/main.py
+          grep -Fq 'TRADINGVIEW_WEBHOOK_SECRET' backend/main.py
+          grep -Fq 'TRADINGVIEW_DB_PATH' backend/main.py
+          grep -Fq 'ATTESTATION_PRIVATE_KEYS_JSON' backend/main.py
+          grep -Fq 'ATTESTATION_ACTIVE_KEY_ID' backend/main.py
+          grep -Fq 'all-android-backend-routes' contracts/routes-v1.json
+          grep -Fq '/v1/tradingview/signals' contracts/routes-v1.json
+          grep -Fq '/v1/research/foundation' contracts/routes-v1.json
+          grep -Fq '/v1/auth/session' contracts/routes-v1.json
+          grep -Fq 'test_all_time_history_range_is_accepted_by_route_contract' backend/tests/test_contracts.py
+          grep -Fq 'test_range_max_response_is_not_clipped_to_cache_limit' backend/tests/test_contracts.py
+          grep -Fq 'test_all_time_capability_is_fail_closed_until_explicit_provider_verification' backend/tests/test_contracts.py
+          grep -Fq 'test_per_series_single_flight_deduplicates_parallel_cache_misses' backend/tests/test_contracts.py
+          grep -Fq 'test_distributed_quota_gate_waits_and_then_allows' backend/tests/test_contracts.py
+          grep -Fq 'test_distributed_retry_after_cooldown_is_shared_via_redis' backend/tests/test_contracts.py
+          grep -Fq 'test_session_subject_epoch_revocation_invalidates_old_tokens' backend/tests/test_contracts.py
+          grep -Fq 'test_snapshot_batch_request_id_single_flight_and_completed_hit' backend/tests/test_contracts.py
+          test -s backend/tests/test_preapk_readiness.py
+      - name: Python compile and full contract/runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/main.py backend/e2e_smoke.py backend/benchmark_full_bist.py backend/preapk_readiness.py
+          (cd backend && PYTHONPATH=. pytest -q)
+      - name: Docker build
+        run: docker build -t borsatakip-production-backend-v5416 ./backend
+
+# verification-trigger: close-118-r7-contract-gates-v2
