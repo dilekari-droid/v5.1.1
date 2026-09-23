@@ -5,6 +5,8 @@ on:
   push:
     branches: [main]
     paths:
+      - 'backend/**'
+      - 'contracts/**'
       - '.github/workflows/production-e2e.yml'
 
 permissions:
@@ -23,24 +25,23 @@ jobs:
       - name: Verify deployed source provenance
         shell: bash
         env:
-          BORSA_E2E_BASE_URL: https://borsa-takip-v5416-final-production.up.railway.app
+          BORSA_E2E_BASE_URL: ${{ vars.BORSA_E2E_BASE_URL || secrets.BORSA_E2E_BASE_URL }}
           BORSA_E2E_EXPECTED_REVISION: ${{ github.sha }}
-          BORSA_E2E_DEPLOYMENT_REVISION: ${{ vars.BORSA_E2E_DEPLOYMENT_REVISION }}
           BORSA_E2E_PROVENANCE_ARTIFACT_PATH: production-e2e-provenance.json
         run: |
           set -euo pipefail
+          test -n "${BORSA_E2E_BASE_URL:-}" || { echo "BORSA_E2E_BASE_URL is not configured" >&2; exit 2; }
           python backend/e2e_provenance.py 2>&1 | tee production-e2e-provenance.log
       - name: Run production E2E contract smoke
         shell: bash
         env:
-          BORSA_E2E_BASE_URL: https://borsa-takip-v5416-final-production.up.railway.app
+          BORSA_E2E_BASE_URL: ${{ vars.BORSA_E2E_BASE_URL || secrets.BORSA_E2E_BASE_URL }}
           BORSA_E2E_API_KEY: ${{ secrets.BORSA_E2E_API_KEY }}
           BORSA_E2E_INSTALL_ID: github-actions-v5416-e2e
           BORSA_E2E_EXPECTED_REVISION: ${{ github.sha }}
           BORSA_E2E_SOURCE_COMMIT: ${{ github.sha }}
           BORSA_E2E_EVIDENCE_PATH: production-e2e-evidence.json
           BORSA_E2E_COMMIT_SHA: ${{ github.sha }}
-          BORSA_E2E_DEPLOYMENT_REVISION: ${{ vars.BORSA_E2E_DEPLOYMENT_REVISION }}
           BORSA_E2E_ARTIFACT_PATH: production-e2e-evidence.json
         run: |
           set -euo pipefail
@@ -58,4 +59,4 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-# verification-trigger: final-seven-item-production-e2e
+# verification-trigger: exact-live-revision-and-protected-session-v4

@@ -8,7 +8,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 from pathlib import Path
@@ -58,8 +58,7 @@ SCANNER_RETRY_BASE_MS = max(100, int(os.getenv("SCANNER_RETRY_BASE_MS", "500")))
 CAPABILITY_CACHE_SECONDS = int(os.getenv("CAPABILITY_CACHE_SECONDS", "10"))
 SCANNER_SYMBOLS = os.getenv("SCANNER_SYMBOLS", "")
 BAR_CACHE_TTL_SECONDS = max(1, int(os.getenv("BAR_CACHE_TTL_SECONDS", "30")))
-BAR_CACHE_OPEN_SESSION_TTL_SECONDS = max(1, int(os.getenv("BAR_CACHE_OPEN_SESSION_TTL_SECONDS", str(BAR_CACHE_TTL_SECONDS))))
-BAR_CACHE_CLOSED_SESSION_TTL_SECONDS = max(BAR_CACHE_OPEN_SESSION_TTL_SECONDS, int(os.getenv("BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", "300")))
+BAR_CACHE_CLOSED_SESSION_TTL_SECONDS = max(BAR_CACHE_TTL_SECONDS, int(os.getenv("BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", "300")))
 BAR_CACHE_DAILY_TTL_SECONDS = max(BAR_CACHE_CLOSED_SESSION_TTL_SECONDS, int(os.getenv("BAR_CACHE_DAILY_TTL_SECONDS", "900")))
 BAR_CACHE_MAX_BARS = max(200, int(os.getenv("BAR_CACHE_MAX_BARS", "2500")))
 BAR_CACHE_IDLE_TTL_SECONDS = max(BAR_CACHE_TTL_SECONDS, int(os.getenv("BAR_CACHE_IDLE_TTL_SECONDS", "900")))
@@ -69,6 +68,8 @@ VIOP_CONTRACT_METADATA_PATH = os.getenv("TRADEWIZE_VIOP_CONTRACT_METADATA_PATH",
 VIOP_METADATA_MAX_AGE_SECONDS = max(60, int(os.getenv("VIOP_METADATA_MAX_AGE_SECONDS", "86400")))
 VIOP_METADATA_REQUIRE_UNIVERSE_AS_OF = os.getenv("VIOP_METADATA_REQUIRE_UNIVERSE_AS_OF", "true").strip().lower() in {"1", "true", "yes", "on"}
 VIOP_METADATA_REQUIRE_COMPLETE = os.getenv("VIOP_METADATA_REQUIRE_COMPLETE", "true").strip().lower() in {"1", "true", "yes", "on"}
+VIOP_METADATA_PAGE_SIZE = max(1, min(1000, int(os.getenv("VIOP_METADATA_PAGE_SIZE", "250"))))
+VIOP_METADATA_MAX_PAGES = max(1, min(100, int(os.getenv("VIOP_METADATA_MAX_PAGES", "20"))))
 VIOP_NEAR_EXPIRY_DAYS = max(0, int(os.getenv("VIOP_NEAR_EXPIRY_DAYS", "3")))
 ALL_TIME_HISTORY_VERIFIED = os.getenv("ALL_TIME_HISTORY_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
 ALL_TIME_HISTORY_START_MS = max(1, int(os.getenv("ALL_TIME_HISTORY_START_MS", "1")))
@@ -106,6 +107,10 @@ ATTESTATION_ACTIVE_KEY_ID = os.getenv("ATTESTATION_ACTIVE_KEY_ID", "").strip()
 ATTESTATION_ACTIVE_KEY_GENERATION = max(0, int(os.getenv("ATTESTATION_ACTIVE_KEY_GENERATION", "0")))
 ATTESTATION_PROVIDER_ID = os.getenv("ATTESTATION_PROVIDER_ID", "tradewize").strip() or "tradewize"
 ATTESTATION_TTL_MS = max(5_000, min(120_000, int(os.getenv("ATTESTATION_TTL_MS", "60000"))))
+PROVIDER_WEIGHT_FORMULA_VERIFIED = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
+PROVIDER_WEIGHT_FORMULA_VERSION = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_VERSION", "").strip()
+PROVIDER_WEIGHT_FORMULA_SOURCE = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_SOURCE", "").strip()
+PROVIDER_WEIGHT_FORMULA_JSON = os.getenv("TRADEWIZE_REQUEST_WEIGHT_FORMULA_JSON", "").strip()
 
 # Canonical Android V5.4.16 dynamic-scanner wire contract. Public values stay lowercase.
 SUPPORTED_SCAN_INTERVALS = {"1m", "3m", "5m", "10m", "15m", "30m", "60m", "1d"}
@@ -133,7 +138,7 @@ FEATURE_CAPABILITIES = {
     "sessionKeyRotation": True,
     "sessionRevocation": True,
     "barCachePersistence": bool(BAR_CACHE_PERSIST_PATH),
-    "providerWeightFormulaVerified": False,
+    "providerWeightFormulaVerified": bool(PROVIDER_WEIGHT_FORMULA_VERIFIED and PROVIDER_WEIGHT_FORMULA_VERSION and PROVIDER_WEIGHT_FORMULA_SOURCE and PROVIDER_WEIGHT_FORMULA_JSON),
     "distributedProviderQuotaConfigured": bool(UPSTREAM_DISTRIBUTED_QUOTA and REDIS_URL),
     # With the verified 5k/hour upstream floor, a cold 640-symbol refresh cannot truthfully promise 5 minutes.
     "fullBistFiveMinuteSla": False,
@@ -156,6 +161,15 @@ def _validate_startup_configuration() -> None:
         raise RuntimeError("UPSTREAM_QUOTA_SCOPE must be all or bars_only")
     if UPSTREAM_DISTRIBUTED_QUOTA and not REDIS_URL:
         raise RuntimeError("REDIS_URL is required when UPSTREAM_DISTRIBUTED_QUOTA=true")
+    if PROVIDER_WEIGHT_FORMULA_VERIFIED:
+        if not (PROVIDER_WEIGHT_FORMULA_VERSION and PROVIDER_WEIGHT_FORMULA_SOURCE and PROVIDER_WEIGHT_FORMULA_JSON):
+            raise RuntimeError("Verified TradeWize request-weight formula requires version, source and JSON definition")
+        try:
+            formula = _parse_provider_weight_formula()
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if not formula:
+            raise RuntimeError("Verified TradeWize request-weight formula is empty")
     if bool(TRADINGVIEW_WEBHOOK_SECRET) != bool(TRADINGVIEW_DB_PATH):
         raise RuntimeError("TRADINGVIEW_WEBHOOK_SECRET and TRADINGVIEW_DB_PATH must be configured together")
     attestation_parts = [bool(ATTESTATION_PRIVATE_KEYS_JSON), bool(ATTESTATION_ACTIVE_KEY_ID), ATTESTATION_ACTIVE_KEY_GENERATION > 0]
@@ -738,12 +752,13 @@ async def _raw_upstream_get(path: str, params: dict[str, Any] | None = None) -> 
     if response.status_code in {429, 503}:
         retry_after = response.headers.get("Retry-After", "").strip()
         headers = {"Retry-After": retry_after} if retry_after else None
-        detail_code = "UPSTREAM_RATE_LIMIT" if response.status_code == 429 else "UPSTREAM_UNAVAILABLE"
-        raise HTTPException(
-            status_code=response.status_code,
-            detail=f"{detail_code}{(': retry-after=' + retry_after) if retry_after else ''}",
-            headers=headers,
-        )
+        if response.status_code == 429 or retry_after:
+            code = "UPSTREAM_RATE_LIMIT" if response.status_code == 429 else "UPSTREAM_UNAVAILABLE"
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"{code}{(': retry-after=' + retry_after) if retry_after else ''}",
+                headers=headers,
+            )
     if response.status_code >= 400:
         raise HTTPException(status_code=502, detail=f"UPSTREAM_HTTP_{response.status_code}: {response.text[:500]}")
     return response
@@ -764,6 +779,58 @@ def _retry_after_seconds(exc: HTTPException, now: datetime | None = None) -> flo
             return max(0.0, (target - current).total_seconds())
         except (TypeError, ValueError, OverflowError):
             return None
+
+
+def _parse_provider_weight_formula() -> dict[str, Any]:
+    """Parse operator-supplied formula only after external provider verification.
+
+    The source tree intentionally ships no TradeWize weight numbers. Production may mark the
+    formula verified only when the official provider source/version and JSON definition are
+    supplied together. This prevents a guessed constant from being promoted as provider truth.
+    """
+    if not PROVIDER_WEIGHT_FORMULA_JSON:
+        return {}
+    try:
+        raw = json.loads(PROVIDER_WEIGHT_FORMULA_JSON)
+    except json.JSONDecodeError as exc:
+        raise ValueError("TRADEWIZE_REQUEST_WEIGHT_FORMULA_JSON must be valid JSON") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("TRADEWIZE_REQUEST_WEIGHT_FORMULA_JSON must be an object")
+    classes = raw.get("classes", raw)
+    if not isinstance(classes, dict):
+        raise ValueError("TradeWize weight formula classes must be an object")
+    normalized: dict[str, int] = {}
+    for name in ("BARS", "TICK", "QUOTE", "METADATA"):
+        value = classes.get(name)
+        if value is None:
+            continue
+        try:
+            weight = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"TradeWize weight for {name} must be an integer") from exc
+        if weight <= 0 or weight > 1_000_000:
+            raise ValueError(f"TradeWize weight for {name} is outside the accepted range")
+        normalized[name] = weight
+    if not normalized:
+        raise ValueError("TradeWize request-weight formula has no supported request classes")
+    return normalized
+
+
+def _provider_weight_formula_is_verified() -> bool:
+    if not (PROVIDER_WEIGHT_FORMULA_VERIFIED and PROVIDER_WEIGHT_FORMULA_VERSION and PROVIDER_WEIGHT_FORMULA_SOURCE):
+        return False
+    try:
+        return bool(_parse_provider_weight_formula())
+    except ValueError:
+        return False
+
+
+def _provider_request_weight(path: str, params: dict[str, Any] | None = None) -> int:
+    """Return a request class weight without inventing undocumented provider semantics."""
+    if not _provider_weight_formula_is_verified():
+        return SCANNER_REQUEST_WEIGHT
+    formula = _parse_provider_weight_formula()
+    return max(1, int(formula.get(_provider_request_class(path), SCANNER_REQUEST_WEIGHT)))
 
 
 _DISTRIBUTED_QUOTA_LUA = r"""
@@ -872,16 +939,17 @@ async def _extend_upstream_cooldown(seconds: float) -> None:
 
 
 async def scanner_upstream_get(path: str, params: dict[str, Any]) -> httpx.Response:
-    """Shared market-data pacing + concurrency + bounded 429/503 Retry-After retry.
+    """Shared market-data pacing + concurrency + bounded 429 retry.
 
     Retry-After is promoted to a process-wide cooldown instead of sleeping only the coroutine
-    that observed the 429/503. This keeps concurrent bar/recent-tick callers from immediately
+    that observed the 429. This keeps concurrent bar/recent-tick callers from immediately
     hitting the provider again during its requested backoff window.
     """
     global _scanner_next_allowed_at
     last_error: HTTPException | None = None
+    request_weight = _provider_request_weight(path, params)
     for attempt in range(SCANNER_RETRY_COUNT + 1):
-        await _distributed_quota_wait(SCANNER_REQUEST_WEIGHT)
+        await _distributed_quota_wait(request_weight)
         async with _scanner_fetch_semaphore:
             async with _scanner_rate_lock:
                 now = time.monotonic()
@@ -903,10 +971,7 @@ async def scanner_upstream_get(path: str, params: dict[str, Any]) -> httpx.Respo
                 retryable = exc.status_code == 429 or (exc.status_code == 503 and retry_after_seconds > 0)
                 if not retryable:
                     raise
-                if exc.status_code == 429:
-                    _provider_quota_metrics["rateLimited"] = int(_provider_quota_metrics.get("rateLimited", 0)) + 1
-                else:
-                    _provider_quota_metrics["unavailableRetryAfter"] = int(_provider_quota_metrics.get("unavailableRetryAfter", 0)) + 1
+                _provider_quota_metrics["rateLimited"] = int(_provider_quota_metrics.get("rateLimited", 0)) + 1
                 if attempt < SCANNER_RETRY_COUNT:
                     _provider_quota_metrics["retries"] = int(_provider_quota_metrics.get("retries", 0)) + 1
                 exponential_seconds = (SCANNER_RETRY_BASE_MS * (2**attempt)) / 1000.0
@@ -976,7 +1041,8 @@ def _quota_metrics_snapshot() -> dict[str, Any]:
         "distributedCooldownExtensions": int(_provider_quota_metrics.get("distributedCooldownExtensions", 0)),
         "distributedQuotaEnabled": bool(UPSTREAM_DISTRIBUTED_QUOTA),
         "requestWeight": SCANNER_REQUEST_WEIGHT,
-        "providerWeightFormulaVerified": False,
+        "providerWeightFormulaVerified": _provider_weight_formula_is_verified(),
+        "providerWeightFormulaVersion": PROVIDER_WEIGHT_FORMULA_VERSION or None,
     "distributedProviderQuotaConfigured": bool(UPSTREAM_DISTRIBUTED_QUOTA and REDIS_URL),
         "byClass": by_class,
         "ingress": {
@@ -1205,28 +1271,6 @@ async def _prewarm_bar_cache_once() -> None:
         _persist_bar_cache_to_disk()
 
 
-def _market_session_is_open(market: str, now_utc: datetime | None = None) -> bool:
-    """Conservative exchange-session classifier used only for cache freshness TTLs."""
-    current = now_utc or datetime.now(timezone.utc)
-    local = current.astimezone(timezone(timedelta(hours=3)))
-    if local.weekday() >= 5:
-        return False
-    minutes = local.hour * 60 + local.minute
-    if market.upper() in {"BIST", "VIOP"}:
-        return 10 * 60 <= minutes < 18 * 60 + 10
-    return True
-
-
-def cache_freshness_ttl_seconds(market: str, interval: str, now_utc: datetime | None = None) -> int:
-    """Single cache freshness policy for every market-history path."""
-    canonical = normalize_interval(interval)
-    if canonical == "1d":
-        return BAR_CACHE_DAILY_TTL_SECONDS
-    if _market_session_is_open(market, now_utc):
-        return BAR_CACHE_OPEN_SESSION_TTL_SECONDS
-    return BAR_CACHE_CLOSED_SESSION_TTL_SECONDS
-
-
 async def _cached_market_bars(
     market: str,
     symbol: str,
@@ -1251,7 +1295,7 @@ async def _cached_market_bars(
         cached = list(entry.get("candles") or [])
         if key in _bar_series_cache:
             _bar_series_cache[key]["lastAccess"] = now
-        freshness_ttl = cache_freshness_ttl_seconds(market, canonical)
+        freshness_ttl = _bar_cache_freshness_ttl_seconds(market, canonical)
         fresh = bool(cached) and now - float(entry.get("at", 0.0)) <= freshness_ttl
 
         # range=max is a real range request. The response is intentionally not clipped to
@@ -1376,6 +1420,36 @@ def extract_price_record(symbol: str, raw: Any) -> dict[str, Any]:
         "currentSessionIncluded": realtime,
         "source": "TradeWize",
     }
+
+
+class CacheFreshnessPolicy:
+    """One history-cache freshness policy shared by every market/history route.
+
+    Session state is inferred only from already-observed provider data. Unknown state uses the
+    shortest (open-session) TTL; no exchange schedule is guessed in source.
+    """
+    @staticmethod
+    def ttl_seconds(market: str, interval: str, session_active: bool | None) -> int:
+        canonical = (interval or DEFAULT_SCAN_INTERVAL).strip().lower()
+        if canonical in {"1day", "1d"}:
+            return BAR_CACHE_DAILY_TTL_SECONDS if session_active is False else max(BAR_CACHE_TTL_SECONDS, min(BAR_CACHE_DAILY_TTL_SECONDS, BAR_CACHE_CLOSED_SESSION_TTL_SECONDS))
+        if session_active is False:
+            return BAR_CACHE_CLOSED_SESSION_TTL_SECONDS
+        return BAR_CACHE_TTL_SECONDS
+
+
+def _market_session_active_hint(market: str) -> bool | None:
+    cache = _bist_cache if market.strip().upper() == "BIST" else _viop_cache if market.strip().upper() == "VIOP" else None
+    if not cache or not cache.get("items"):
+        return None
+    items = [item for item in cache.get("items", []) if isinstance(item, dict)]
+    if not items:
+        return None
+    return any(bool(item.get("realtime")) for item in items)
+
+
+def _bar_cache_freshness_ttl_seconds(market: str, interval: str) -> int:
+    return CacheFreshnessPolicy.ttl_seconds(market, interval, _market_session_active_hint(market))
 
 
 def normalize_interval(raw: str | None) -> str:
@@ -1544,6 +1618,46 @@ def _normalize_viop_contract_metadata(symbol: str, raw: dict[str, Any]) -> dict[
     }
 
 
+def _parse_viop_metadata_page(payload: Any) -> tuple[list[tuple[str, dict[str, Any]]], int, int | None, bool | None, str | None]:
+    value = unwrap_json(payload)
+    universe_as_of = 0
+    declared_total: int | None = None
+    declared_has_more: bool | None = None
+    next_cursor: str | None = None
+    raw_items: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(value, dict):
+        universe_as_of = normalize_timestamp(value.get("universeAsOf") or value.get("asOf") or value.get("timestamp"))
+        try:
+            if value.get("totalCount") is not None:
+                declared_total = int(value.get("totalCount"))
+        except (TypeError, ValueError):
+            declared_total = None
+        if value.get("hasMore") is not None:
+            declared_has_more = bool(value.get("hasMore"))
+        cursor_raw = value.get("nextCursor") or value.get("next_cursor") or value.get("cursorNext")
+        if cursor_raw is not None and str(cursor_raw).strip():
+            next_cursor = str(cursor_raw).strip()
+        candidate = value.get("items") or value.get("contracts") or value.get("instruments")
+        if isinstance(candidate, list):
+            for row in candidate:
+                if isinstance(row, dict):
+                    symbol = str(row.get("symbol") or row.get("contractCode") or row.get("code") or "").strip().upper()
+                    if symbol:
+                        raw_items.append((symbol, row))
+        else:
+            reserved = {"data", "meta", "universeAsOf", "asOf", "timestamp", "totalCount", "hasMore", "nextCursor", "next_cursor", "cursorNext"}
+            for key, row in value.items():
+                if isinstance(row, dict) and key not in reserved:
+                    raw_items.append((str(key).strip().upper(), row))
+    elif isinstance(value, list):
+        for row in value:
+            if isinstance(row, dict):
+                symbol = str(row.get("symbol") or row.get("contractCode") or row.get("code") or "").strip().upper()
+                if symbol:
+                    raw_items.append((symbol, row))
+    return raw_items, universe_as_of, declared_total, declared_has_more, next_cursor
+
+
 async def discover_viop_contract_metadata(force: bool = False) -> tuple[list[dict[str, Any]], int]:
     if not VIOP_CONTRACT_METADATA_PATH:
         raise HTTPException(
@@ -1553,39 +1667,45 @@ async def discover_viop_contract_metadata(force: bool = False) -> tuple[list[dic
     now = time.time()
     if not force and _viop_contract_cache["items"] and now - float(_viop_contract_cache["at"]) < CAPABILITY_CACHE_SECONDS:
         return list(_viop_contract_cache["items"]), int(_viop_contract_cache["universeAsOf"])
-    response = await upstream_get(VIOP_CONTRACT_METADATA_PATH, {"all": "true"})
-    payload = unwrap_json(response.json())
+
+    all_raw_items: list[tuple[str, dict[str, Any]]] = []
     universe_as_of = 0
     declared_total: int | None = None
-    declared_has_more: bool | None = None
-    raw_items: list[tuple[str, dict[str, Any]]] = []
-    if isinstance(payload, dict):
-        universe_as_of = normalize_timestamp(payload.get("universeAsOf") or payload.get("asOf") or payload.get("timestamp"))
-        try:
-            if payload.get("totalCount") is not None:
-                declared_total = int(payload.get("totalCount"))
-        except (TypeError, ValueError):
-            declared_total = None
-        if payload.get("hasMore") is not None:
-            declared_has_more = bool(payload.get("hasMore"))
-        candidate = payload.get("items") or payload.get("contracts") or payload.get("instruments")
-        if isinstance(candidate, list):
-            for row in candidate:
-                if isinstance(row, dict):
-                    symbol = str(row.get("symbol") or row.get("contractCode") or row.get("code") or "").strip().upper()
-                    if symbol:
-                        raw_items.append((symbol, row))
+    cursor: str | None = None
+    final_has_more: bool | None = None
+    seen_cursors: set[str] = set()
+    for page_index in range(VIOP_METADATA_MAX_PAGES):
+        params: dict[str, Any] = {"all": "true", "limit": VIOP_METADATA_PAGE_SIZE}
+        if cursor:
+            params["cursor"] = cursor
+        response = await upstream_get(VIOP_CONTRACT_METADATA_PATH, params)
+        page_items, page_as_of, page_total, page_has_more, next_cursor = _parse_viop_metadata_page(response.json())
+        if page_index == 0:
+            universe_as_of = page_as_of
+            declared_total = page_total
         else:
-            for key, row in payload.items():
-                if isinstance(row, dict) and key not in {"data", "meta"}:
-                    raw_items.append((str(key).strip().upper(), row))
-    elif isinstance(payload, list):
-        for row in payload:
-            if isinstance(row, dict):
-                symbol = str(row.get("symbol") or row.get("contractCode") or row.get("code") or "").strip().upper()
-                if symbol:
-                    raw_items.append((symbol, row))
+            if page_as_of > 0 and universe_as_of > 0 and page_as_of != universe_as_of:
+                raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_SNAPSHOT_CHANGED", "message": "Pagination sırasında universeAsOf değişti; atomik evren doğrulanamadı."})
+            if declared_total is not None and page_total is not None and page_total != declared_total:
+                raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_TOTAL_CHANGED", "message": "Pagination sırasında totalCount değişti."})
+            if universe_as_of <= 0 and page_as_of > 0:
+                universe_as_of = page_as_of
+            if declared_total is None and page_total is not None:
+                declared_total = page_total
+        all_raw_items.extend(page_items)
+        final_has_more = page_has_more
+        if page_has_more is not True:
+            break
+        if not next_cursor:
+            raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_PARTIAL", "message": "Provider hasMore=true döndürdü fakat nextCursor sağlamadı."})
+        if next_cursor in seen_cursors or next_cursor == cursor:
+            raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_CURSOR_LOOP", "message": "Provider pagination cursor döngüsü tespit edildi."})
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    else:
+        raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_PAGE_LIMIT", "maxPages": VIOP_METADATA_MAX_PAGES})
 
+    raw_items = all_raw_items
     now_ms = int(time.time() * 1000)
     if VIOP_METADATA_REQUIRE_UNIVERSE_AS_OF and universe_as_of <= 0:
         raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_TIMESTAMP_MISSING", "message": "VİOP metadata kaynağı universeAsOf/asOf sağlamadı; güncellik uydurulmaz."})
@@ -1594,7 +1714,7 @@ async def discover_viop_contract_metadata(force: bool = False) -> tuple[list[dic
         if age_seconds > VIOP_METADATA_MAX_AGE_SECONDS:
             raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_STALE", "ageSeconds": age_seconds})
     if VIOP_METADATA_REQUIRE_COMPLETE:
-        if declared_has_more is True:
+        if final_has_more is True:
             raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_PARTIAL", "message": "Provider metadata cevabı ek sayfa olduğunu bildiriyor."})
         if declared_total is not None and declared_total != len(raw_items):
             raise HTTPException(status_code=503, detail={"code": "VIOP_CONTRACT_METADATA_PARTIAL", "declaredTotal": declared_total, "received": len(raw_items)})
@@ -2103,7 +2223,13 @@ async def provider_capabilities(force: bool = False) -> dict[str, Any]:
             "pacingMs": SCANNER_PACING_MS,
             "quotaScope": UPSTREAM_QUOTA_SCOPE,
             "requestWeight": SCANNER_REQUEST_WEIGHT,
-            "providerWeightFormulaVerified": False,
+            "providerWeightFormulaVerified": _provider_weight_formula_is_verified(),
+            "providerWeightFormulaVersion": PROVIDER_WEIGHT_FORMULA_VERSION or None,
+            "cacheFreshnessPolicy": {
+                "openSessionTtlMs": BAR_CACHE_TTL_SECONDS * 1000,
+                "closedSessionTtlMs": BAR_CACHE_CLOSED_SESSION_TTL_SECONDS * 1000,
+                "dailyTtlMs": BAR_CACHE_DAILY_TTL_SECONDS * 1000,
+            },
             "distributedProviderQuotaConfigured": bool(UPSTREAM_DISTRIBUTED_QUOTA and REDIS_URL),
         },
         "quotaMetrics": _quota_metrics_snapshot(),
@@ -2477,12 +2603,7 @@ async def scanner_opportunities(
             "providerWeightFormulaVerified": False,
             "distributedProviderQuotaConfigured": bool(UPSTREAM_DISTRIBUTED_QUOTA and REDIS_URL),
             "snapshotBatchMaxSymbols": SNAPSHOT_BATCH_MAX_SYMBOLS,
-            "cacheTtlMs": BAR_CACHE_OPEN_SESSION_TTL_SECONDS * 1000,
-            "cacheFreshnessPolicy": {
-                "openSessionMs": BAR_CACHE_OPEN_SESSION_TTL_SECONDS * 1000,
-                "closedSessionMs": BAR_CACHE_CLOSED_SESSION_TTL_SECONDS * 1000,
-                "dailyMs": BAR_CACHE_DAILY_TTL_SECONDS * 1000,
-            },
+            "cacheTtlMs": BAR_CACHE_TTL_SECONDS * 1000,
             "serverBatchEnforced": True,
             "proactiveRateLimitEnforced": True,
         },

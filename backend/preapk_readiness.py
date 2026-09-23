@@ -31,7 +31,7 @@ def collect_readiness(*, validate_startup: bool = False) -> dict[str, Any]:
         "fakeAttestationForbidden": main.FEATURE_CAPABILITIES.get("attestationReady") is False,
         "fakeResearchForbidden": main.FEATURE_CAPABILITIES.get("researchFoundation") is False,
         "fiveMinuteSlaFailClosed": main.FEATURE_CAPABILITIES.get("fullBistFiveMinuteSla") is False,
-        "providerWeightFormulaFailClosed": main.FEATURE_CAPABILITIES.get("providerWeightFormulaVerified") is False,
+        "providerWeightFormulaNoGuess": (not main.PROVIDER_WEIGHT_FORMULA_VERIFIED) or main._provider_weight_formula_is_verified(),
     }
 
     production_config = {
@@ -42,6 +42,8 @@ def collect_readiness(*, validate_startup: bool = False) -> dict[str, Any]:
         "distributedQuotaConfigured": _bool(main.UPSTREAM_DISTRIBUTED_QUOTA and main.REDIS_URL),
         "viopMetadataConfigured": _bool(main.VIOP_CONTRACT_METADATA_PATH),
         "tradingViewConfigured": _bool(main.TRADINGVIEW_WEBHOOK_SECRET and main.TRADINGVIEW_DB_PATH),
+        "providerWeightFormulaConfigured": _bool(main._provider_weight_formula_is_verified()),
+        "viopPaginationConfigured": _bool(main.VIOP_METADATA_PAGE_SIZE > 0 and main.VIOP_METADATA_MAX_PAGES > 0),
         "attestationSigningConfigured": _bool(
             main.ATTESTATION_PRIVATE_KEYS_JSON
             and main.ATTESTATION_ACTIVE_KEY_ID
@@ -50,7 +52,7 @@ def collect_readiness(*, validate_startup: bool = False) -> dict[str, Any]:
     }
 
     external_gates = {
-        "providerWeightFormulaVerified": _bool(main.FEATURE_CAPABILITIES.get("providerWeightFormulaVerified")),
+        "providerWeightFormulaVerified": _bool(main._provider_weight_formula_is_verified()),
         "realtimeProviderE2EPassed": _bool(main.FEATURE_CAPABILITIES.get("realtimeScannerRest")),
         "realDeviceAttestationE2EPassed": _bool(main.FEATURE_CAPABILITIES.get("attestationReady")),
         "viopContractMetadataReady": _bool(main.FEATURE_CAPABILITIES.get("viopContractsReady")),

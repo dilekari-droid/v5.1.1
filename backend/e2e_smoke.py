@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ TIMEOUT = float(os.getenv("BORSA_E2E_TIMEOUT_SECONDS", "30"))
 ARTIFACT_PATH = os.getenv("BORSA_E2E_ARTIFACT_PATH", "").strip()
 COMMIT_SHA = os.getenv("BORSA_E2E_COMMIT_SHA", os.getenv("GITHUB_SHA", "")).strip()
 DEPLOYMENT_REVISION = os.getenv("BORSA_E2E_DEPLOYMENT_REVISION", "").strip()
+_SHA40 = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 @dataclass
@@ -70,7 +72,7 @@ def _deployment_revision_from_health(payload: dict[str, Any], headers: httpx.Hea
         value = str(payload.get(key) or "").strip()
         if value:
             return value[:128]
-    for key in ("x-deployment-revision", "x-render-git-commit", "x-railway-deployment-id"):
+    for key in ("x-deployment-revision", "x-render-git-commit"):
         value = str(headers.get(key) or "").strip()
         if value:
             return value[:128]
@@ -101,6 +103,14 @@ def main() -> int:
             health_json = health.json()
             deployment_revision = _deployment_revision_from_health(health_json, health.headers)
             checks.append(Check("health", health_json.get("ok") is True, f"HTTP {health.status_code}"))
+            if not _SHA40.fullmatch(deployment_revision):
+                raise AssertionError("live /v1/health revision must be a full 40-hex Git SHA")
+            if COMMIT_SHA:
+                if not _SHA40.fullmatch(COMMIT_SHA):
+                    raise AssertionError("BORSA_E2E_COMMIT_SHA must be a full 40-hex Git SHA")
+                if deployment_revision.lower() != COMMIT_SHA.lower():
+                    raise AssertionError(f"live deployment revision mismatch: {deployment_revision} != {COMMIT_SHA}")
+            checks.append(Check("deployment-revision", True, deployment_revision))
 
             failure_stage = "capabilities"
             caps_r = get("/v1/provider/capabilities", force="true")
@@ -129,15 +139,15 @@ def main() -> int:
                     timeout=TIMEOUT,
                     follow_redirects=False,
                 ) as session_client:
-                    session_health = session_client.get("/v1/health")
+                    session_health = session_client.get("/v1/provider/capabilities")
                     session_health.raise_for_status()
-                    checks.append(Check("session-bootstrap-protected-call", session_health.json().get("ok") is True, "BorsaSession accepted"))
-                    wrong_install = session_client.get("/v1/health", headers={"X-Install-ID": INSTALL + "-wrong"})
+                    checks.append(Check("session-bootstrap-protected-call", session_health.json().get("ok") is True, "BorsaSession accepted on protected capability route"))
+                    wrong_install = session_client.get("/v1/provider/capabilities", headers={"X-Install-ID": INSTALL + "-wrong"})
                     checks.append(Check("session-install-binding", wrong_install.status_code == 401, f"HTTP {wrong_install.status_code}"))
                     if features.get("sessionRevocation") is True:
                         revoke_r = client.post("/v1/auth/revoke-installation")
                         revoke_r.raise_for_status()
-                        revoked_call = session_client.get("/v1/health")
+                        revoked_call = session_client.get("/v1/provider/capabilities")
                         checks.append(Check("session-subject-epoch-revoke", revoked_call.status_code == 401, f"HTTP {revoked_call.status_code}"))
                         remint_r = client.post("/v1/auth/session", json={})
                         remint_r.raise_for_status()
@@ -150,7 +160,7 @@ def main() -> int:
                             timeout=TIMEOUT,
                             follow_redirects=False,
                         ) as remint_client:
-                            remint_health = remint_client.get("/v1/health")
+                            remint_health = remint_client.get("/v1/provider/capabilities")
                             checks.append(Check("session-remint-after-revoke", remint_health.status_code == 200, f"HTTP {remint_health.status_code}"))
 
             failure_stage = "preflight"

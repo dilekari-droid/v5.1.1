@@ -441,6 +441,7 @@ class ViopActivity : BaseActivity() {
                 lastProductionResult = null
                 lastUnderlyingCompletedAt = System.currentTimeMillis()
                 showingUnderlying = true
+                persistDashboardState()
                 applyDashboardFilter()
                 status.text = buildString {
                     append("DAYANAK ÖN TARAMA TAMAMLANDI • VİOP fiyatı/sinyali üretilmedi\n")
@@ -532,6 +533,7 @@ class ViopActivity : BaseActivity() {
         productionItems = ViopScanner.sortOpportunities(items)
         underlyingItems = emptyList()
         showingUnderlying = false
+        persistDashboardState()
         applyDashboardFilter()
     }
 
@@ -796,6 +798,7 @@ class ViopActivity : BaseActivity() {
         outState.putString(KEY_DIRECTION, uiDirection.name)
         outState.putString(KEY_SORT, uiSort.name)
         outState.putBoolean(KEY_ADVANCED, uiAdvancedFilters)
+        outState.putBoolean(KEY_SHOWING_UNDERLYING, showingUnderlying)
         super.onSaveInstanceState(outState)
     }
 
@@ -806,6 +809,7 @@ class ViopActivity : BaseActivity() {
         uiDirection = enumOrDefault(savedInstanceState?.getString(KEY_DIRECTION) ?: prefs.getString(KEY_DIRECTION, null), UiDirection.ALL)
         uiSort = enumOrDefault(savedInstanceState?.getString(KEY_SORT) ?: prefs.getString(KEY_SORT, null), UiSort.RANKING)
         uiAdvancedFilters = savedInstanceState?.getBoolean(KEY_ADVANCED, prefs.getBoolean(KEY_ADVANCED, false)) ?: prefs.getBoolean(KEY_ADVANCED, false)
+        showingUnderlying = savedInstanceState?.getBoolean(KEY_SHOWING_UNDERLYING, prefs.getBoolean(KEY_SHOWING_UNDERLYING, false)) ?: prefs.getBoolean(KEY_SHOWING_UNDERLYING, false)
     }
 
     private fun persistDashboardState() {
@@ -815,6 +819,7 @@ class ViopActivity : BaseActivity() {
             .putString(KEY_DIRECTION, uiDirection.name)
             .putString(KEY_SORT, uiSort.name)
             .putBoolean(KEY_ADVANCED, uiAdvancedFilters)
+            .putBoolean(KEY_SHOWING_UNDERLYING, showingUnderlying)
             .apply()
     }
 
@@ -833,6 +838,7 @@ class ViopActivity : BaseActivity() {
         private const val KEY_DIRECTION = "direction"
         private const val KEY_SORT = "sort"
         private const val KEY_ADVANCED = "advanced_filters"
+        private const val KEY_SHOWING_UNDERLYING = "showing_underlying"
     }
 
 }

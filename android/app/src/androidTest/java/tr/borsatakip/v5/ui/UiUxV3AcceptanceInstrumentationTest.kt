@@ -29,6 +29,7 @@ class UiUxV3AcceptanceInstrumentationTest {
             experimentalProvidersEnabled = false
             yahooFallbackEnabled = false
         }
+        context.getSharedPreferences("viop_dashboard_state", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     private fun opportunity(index: Int): Opportunity {
@@ -65,6 +66,12 @@ class UiUxV3AcceptanceInstrumentationTest {
         view.getLocationOnScreen(location)
         assertTrue("${view.id} starts before screen", location[0] >= 0)
         assertTrue("${view.id} exceeds screen width", location[0] + view.width <= widthPx)
+    }
+
+    private fun assertTouchTargetAtLeast48Dp(view: View) {
+        val minPx = (48f * view.resources.displayMetrics.density).toInt()
+        assertTrue("${view.id} touch target width ${view.width}px < 48dp", view.width >= minPx)
+        assertTrue("${view.id} touch target height ${view.height}px < 48dp", view.height >= minPx)
     }
 
     @Test
@@ -108,6 +115,72 @@ class UiUxV3AcceptanceInstrumentationTest {
         }
         val elapsed = SystemClock.elapsedRealtime() - started
         assertTrue("630-row render/scroll acceptance exceeded 5000 ms: $elapsed", elapsed < 5_000L)
+    }
+
+
+    @Test
+    fun viop_filter_and_sort_state_survives_activity_recreate() {
+        prepareOfflineSafeSettings()
+        ActivityScenario.launch(ViopActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.findViewById<android.widget.EditText>(R.id.viopSearch).setText("xu030")
+                activity.findViewById<View>(R.id.filterLong).performClick()
+                activity.findViewById<View>(R.id.sortMode).performClick()
+                activity.findViewById<View>(R.id.detailedFilter).performClick()
+            }
+            scenario.recreate()
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity { activity ->
+                assertEquals("xu030", activity.findViewById<android.widget.EditText>(R.id.viopSearch).text.toString())
+                assertEquals("Sırala: Sinyal", activity.findViewById<android.widget.Button>(R.id.sortMode).text.toString())
+                assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.advancedFilterRow).visibility)
+            }
+        }
+    }
+
+    @Test
+    fun viop_filter_and_sort_state_survives_full_activity_reopen() {
+        prepareOfflineSafeSettings()
+        ActivityScenario.launch(ViopActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.findViewById<android.widget.EditText>(R.id.viopSearch).setText("xu100")
+                activity.findViewById<View>(R.id.filterShort).performClick()
+                activity.findViewById<View>(R.id.sortMode).performClick()
+                activity.findViewById<View>(R.id.detailedFilter).performClick()
+            }
+        }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        ActivityScenario.launch(ViopActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals("xu100", activity.findViewById<android.widget.EditText>(R.id.viopSearch).text.toString())
+                assertEquals("Sırala: Sinyal", activity.findViewById<android.widget.Button>(R.id.sortMode).text.toString())
+                assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.advancedFilterRow).visibility)
+            }
+        }
+    }
+
+    @Test
+    fun critical_controls_fit_and_meet_touch_target_at_current_font_scale() {
+        prepareOfflineSafeSettings()
+        val largeFont = InstrumentationRegistry.getArguments().getString("largeFont") == "true"
+        ActivityScenario.launch(OpportunityActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                if (largeFont) assertTrue("font scale must be >= 1.8 for large-font acceptance", activity.resources.configuration.fontScale >= 1.8f)
+                activity.findViewById<View>(R.id.btnSortOpportunity).also {
+                    assertInsideScreen(it)
+                    assertTouchTargetAtLeast48Dp(it)
+                }
+            }
+        }
+        ActivityScenario.launch(ViopActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                listOf(R.id.refresh, R.id.filterAll, R.id.filterLong, R.id.filterShort, R.id.filterWatch, R.id.detailedFilter, R.id.sortMode).forEach { id ->
+                    activity.findViewById<View>(id).also { view ->
+                        assertTouchTargetAtLeast48Dp(view)
+                    }
+                }
+            }
+        }
     }
 
     @Test

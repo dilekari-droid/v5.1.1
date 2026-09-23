@@ -2,7 +2,6 @@ import asyncio
 import importlib
 import json
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -609,35 +608,6 @@ async def test_retry_after_sets_process_wide_market_data_cooldown(monkeypatch):
     await main.scanner_upstream_get("/api/v1/market-data/bars", {"symbol": "ASELS"})
     assert calls
     assert calls[0] - started >= 0.02
-
-
-@pytest.mark.asyncio
-async def test_503_retry_after_sets_process_wide_market_data_cooldown(monkeypatch):
-    monkeypatch.setattr(main, "SCANNER_RETRY_COUNT", 0)
-    monkeypatch.setattr(main, "SCANNER_PACING_MS", 1)
-    monkeypatch.setattr(main, "SCANNER_RETRY_BASE_MS", 10)
-    main._scanner_next_allowed_at = 0.0
-
-    async def unavailable(path, params):
-        raise main.HTTPException(status_code=503, detail="maintenance", headers={"Retry-After": "0.05"})
-
-    monkeypatch.setattr(main, "_raw_upstream_get", unavailable)
-    with pytest.raises(main.HTTPException) as exc_info:
-        await main.scanner_upstream_get("/api/v1/market-data/bars", {"symbol": "THYAO"})
-    assert exc_info.value.status_code == 503
-    assert main._scanner_next_allowed_at - time.monotonic() > 0.02
-    assert main._provider_quota_metrics["unavailableRetryAfter"] == 1
-
-
-def test_cache_freshness_policy_is_centralized_by_session_and_interval(monkeypatch):
-    monkeypatch.setattr(main, "BAR_CACHE_OPEN_SESSION_TTL_SECONDS", 30)
-    monkeypatch.setattr(main, "BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", 300)
-    monkeypatch.setattr(main, "BAR_CACHE_DAILY_TTL_SECONDS", 900)
-    open_session = datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc)
-    closed_session = datetime(2026, 9, 23, 19, 0, tzinfo=timezone.utc)
-    assert main.cache_freshness_ttl_seconds("BIST", "5m", open_session) == 30
-    assert main.cache_freshness_ttl_seconds("BIST", "5m", closed_session) == 300
-    assert main.cache_freshness_ttl_seconds("BIST", "1d", open_session) == 900
 
 
 @pytest.mark.asyncio
@@ -1348,3 +1318,154 @@ def test_public_health_but_protected_symbols_remain_auth_required(monkeypatch):
     assert health.status_code == 200
     protected = client.get("/v1/bist/symbols")
     assert protected.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_retry_after_503_sets_process_wide_market_data_cooldown(monkeypatch):
+    monkeypatch.setattr(main, "SCANNER_RETRY_COUNT", 0)
+    monkeypatch.setattr(main, "SCANNER_PACING_MS", 1)
+    monkeypatch.setattr(main, "SCANNER_RETRY_BASE_MS", 10)
+    main._scanner_next_allowed_at = 0.0
+
+    async def unavailable(path, params):
+        raise main.HTTPException(status_code=503, detail="maintenance", headers={"Retry-After": "0.05"})
+
+    monkeypatch.setattr(main, "_raw_upstream_get", unavailable)
+    with pytest.raises(main.HTTPException) as exc:
+        await main.scanner_upstream_get("/api/v1/market-data/bars", {"symbol": "THYAO"})
+    assert exc.value.status_code == 503
+    assert main._scanner_next_allowed_at - time.monotonic() > 0.02
+
+
+@pytest.mark.asyncio
+async def test_raw_upstream_preserves_503_retry_after_for_global_gate(monkeypatch):
+    class Response:
+        status_code = 503
+        headers = {"Retry-After": "7"}
+        text = "maintenance"
+        def json(self): return {}
+
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def get(self, *args, **kwargs): return Response()
+
+    monkeypatch.setattr(main, "get_upstream_access_token", lambda *args, **kwargs: None)
+
+    async def fake_token(*args, **kwargs): return "token"
+    monkeypatch.setattr(main, "get_upstream_access_token", fake_token)
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda *args, **kwargs: Client())
+    with pytest.raises(main.HTTPException) as exc:
+        await main._raw_upstream_get("/api/v1/market-data/bars", {"symbol": "THYAO"})
+    assert exc.value.status_code == 503
+    assert exc.value.headers == {"Retry-After": "7"}
+
+
+def test_cache_freshness_policy_is_central_and_fail_conservative(monkeypatch):
+    monkeypatch.setattr(main, "BAR_CACHE_TTL_SECONDS", 30)
+    monkeypatch.setattr(main, "BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", 300)
+    monkeypatch.setattr(main, "BAR_CACHE_DAILY_TTL_SECONDS", 900)
+    main._bist_cache.update({"at": time.time(), "items": []})
+    assert main._bar_cache_freshness_ttl_seconds("BIST", "5m") == 30
+    main._bist_cache.update({"at": time.time(), "items": [{"realtime": False}]})
+    assert main._bar_cache_freshness_ttl_seconds("BIST", "5m") == 300
+    assert main._bar_cache_freshness_ttl_seconds("BIST", "1d") == 900
+    main._bist_cache.update({"at": time.time(), "items": [{"realtime": True}]})
+    assert main._bar_cache_freshness_ttl_seconds("BIST", "5m") == 30
+
+
+def test_provider_weight_formula_requires_explicit_verified_source(monkeypatch):
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_VERIFIED", False)
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_VERSION", "")
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_SOURCE", "")
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_JSON", "")
+    monkeypatch.setattr(main, "SCANNER_REQUEST_WEIGHT", 3)
+    assert main._provider_weight_formula_is_verified() is False
+    assert main._provider_request_weight("/api/v1/market-data/bars", {"countBack": 120}) == 3
+
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_VERIFIED", True)
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_VERSION", "official-v1")
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_SOURCE", "provider-document")
+    monkeypatch.setattr(main, "PROVIDER_WEIGHT_FORMULA_JSON", json.dumps({"classes": {"BARS": 5, "TICK": 2, "QUOTE": 1, "METADATA": 4}}))
+    assert main._provider_weight_formula_is_verified() is True
+    assert main._provider_request_weight("/api/v1/market-data/bars", {}) == 5
+    assert main._provider_request_weight("/api/v1/market-data/recent-ticks", {}) == 2
+
+
+@pytest.mark.asyncio
+async def test_viop_metadata_pagination_walks_all_pages_without_duplicates(monkeypatch):
+    monkeypatch.setattr(main, "VIOP_CONTRACT_METADATA_PATH", "/fake/viop-metadata")
+    monkeypatch.setattr(main, "VIOP_METADATA_REQUIRE_UNIVERSE_AS_OF", True)
+    monkeypatch.setattr(main, "VIOP_METADATA_REQUIRE_COMPLETE", True)
+    monkeypatch.setattr(main, "VIOP_METADATA_MAX_AGE_SECONDS", 300)
+    monkeypatch.setattr(main, "VIOP_METADATA_MAX_PAGES", 5)
+    main._viop_contract_cache.update({"at": 0.0, "items": [], "universeAsOf": 0})
+    now_ms = int(time.time() * 1000)
+    future_ms = now_ms + 30 * 86_400_000
+    pages = {
+        None: {
+            "universeAsOf": now_ms,
+            "totalCount": 2,
+            "hasMore": True,
+            "nextCursor": "page-2",
+            "items": [{"symbol": "F_XU0301026", "underlying": "XU030", "expiry": "2026-10", "contractType": "FUTURE", "tickSize": 0.25, "multiplier": 10, "lastTradingAt": future_ms}],
+        },
+        "page-2": {
+            "universeAsOf": now_ms,
+            "totalCount": 2,
+            "hasMore": False,
+            "items": [{"symbol": "F_THYAO1026", "underlying": "THYAO", "expiry": "2026-10", "contractType": "FUTURE", "tickSize": 0.01, "multiplier": 100, "lastTradingAt": future_ms}],
+        },
+    }
+    seen = []
+
+    class Response:
+        def __init__(self, payload): self._payload = payload
+        def json(self): return self._payload
+
+    async def fake_get(path, params):
+        cursor = params.get("cursor")
+        seen.append(cursor)
+        return Response(pages[cursor])
+
+    monkeypatch.setattr(main, "upstream_get", fake_get)
+    items, as_of = await main.discover_viop_contract_metadata(force=True)
+    assert as_of == now_ms
+    assert seen == [None, "page-2"]
+    assert {item["symbol"] for item in items} == {"F_XU0301026", "F_THYAO1026"}
+
+
+def test_viop_filter_sort_state_survives_recreation_and_reopen_source_contract():
+    repo_root = Path(__file__).resolve().parents[2]
+    source = (repo_root / "android" / "app" / "src" / "main" / "java" / "tr" / "borsatakip" / "v5" / "ui" / "ViopActivity.kt").read_text()
+    assert "override fun onSaveInstanceState" in source
+    assert "restoreDashboardState(savedInstanceState)" in source
+    assert "persistDashboardState()" in source
+    assert "PREFS_DASHBOARD" in source
+    for key in ("KEY_QUERY", "KEY_CATEGORY", "KEY_DIRECTION", "KEY_SORT", "KEY_ADVANCED", "KEY_SHOWING_UNDERLYING"):
+        assert key in source
+    assert ".putBoolean(KEY_SHOWING_UNDERLYING, showingUnderlying)" in source
+    assert "showingUnderlying = savedInstanceState?.getBoolean(KEY_SHOWING_UNDERLYING" in source
+
+def test_ui_accessibility_acceptance_covers_large_font_touch_targets_and_state_recreation():
+    repo_root = Path(__file__).resolve().parents[2]
+    instrument = (repo_root / "android" / "app" / "src" / "androidTest" / "java" / "tr" / "borsatakip" / "v5" / "ui" / "UiUxV3AcceptanceInstrumentationTest.kt").read_text()
+    runner = (repo_root / ".github" / "scripts" / "run-v5416-instrumentation.sh").read_text()
+    viop_layout = (repo_root / "android" / "app" / "src" / "main" / "res" / "layout" / "activity_viop.xml").read_text()
+    opportunity_layout = (repo_root / "android" / "app" / "src" / "main" / "res" / "layout" / "activity_opportunity.xml").read_text()
+    assert "viop_filter_and_sort_state_survives_activity_recreate" in instrument
+    assert "critical_controls_fit_and_meet_touch_target_at_current_font_scale" in instrument
+    assert "font_scale 2.0" in runner and "largeFont=true" in runner
+    assert 'android:id="@+id/filterAll" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp"' in viop_layout
+    assert 'android:id="@+id/btnSortOpportunity"' in opportunity_layout and 'android:layout_height="48dp"' in opportunity_layout
+
+
+def test_production_e2e_uses_configured_target_and_protected_session_route():
+    repo_root = Path(__file__).resolve().parents[2]
+    workflow = (repo_root / ".github" / "workflows" / "production-e2e.yml").read_text()
+    smoke = (repo_root / "backend" / "e2e_smoke.py").read_text()
+    assert "borsa-takip-v5416-final-production.up.railway.app" not in workflow
+    assert "vars.BORSA_E2E_BASE_URL || secrets.BORSA_E2E_BASE_URL" in workflow
+    assert 'session_client.get("/v1/provider/capabilities")' in smoke
+    assert 'session_client.get("/v1/health")' not in smoke
+    assert "live /v1/health revision must be a full 40-hex Git SHA" in smoke
