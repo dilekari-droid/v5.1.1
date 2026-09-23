@@ -1,0 +1,131 @@
+name: V5.4.16 Pre-APK Readiness Evidence
+
+on:
+  push:
+    branches:
+      - evidence/v5.4.16-preapk-readiness
+    paths:
+      - '.github/workflows/v5416-preapk-readiness-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preapk-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pinned pre-APK candidate
+        uses: actions/checkout@v4
+        with:
+          ref: release/v5.4.16-preapk-1508168
+          fetch-depth: 1
+
+      - name: Verify exact candidate provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = '1508168247a7ff4c750e2b20404a8ef9ba69cabe'
+          test "$(git rev-parse HEAD^{tree})" = '5024dbf26e4d461fed8944a15596fe554738b296'
+          echo "candidateCommit=$(git rev-parse HEAD)"
+          echo "candidateTree=$(git rev-parse HEAD^{tree})"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Produce source-policy readiness evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd backend && PYTHONPATH=. python preapk_readiness.py) > /tmp/v5416-preapk-source-policy.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('/tmp/v5416-preapk-source-policy.json').read_text())
+          assert p['sourcePolicyOk'] is True
+          assert p['sourcePolicy']['fakeRealtimeForbidden'] is True
+          assert p['sourcePolicy']['fakeAttestationForbidden'] is True
+          assert p['sourcePolicy']['providerWeightFormulaFailClosed'] is True
+          assert p['sourcePolicy']['fiveMinuteSlaFailClosed'] is True
+          assert p['externalGates']['providerWeightFormulaVerified'] is False
+          assert p['externalGates']['fullBistFiveMinuteSlaVerified'] is False
+          print(json.dumps({
+              'result': 'PASS',
+              'sourcePolicyOk': p['sourcePolicyOk'],
+              'externalGates': p['externalGates'],
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Prove production startup fails closed without required secrets/provider credential
+        shell: bash
+        env:
+          APP_ENV: production
+          APP_API_KEY: ''
+          SESSION_TOKEN_SECRET: ''
+          TRADEWIZE_API_KEY: ''
+          TRADEWIZE_ACCESS_TOKEN: ''
+        run: |
+          set -euo pipefail
+          (cd backend && PYTHONPATH=. python preapk_readiness.py --validate-startup) > /tmp/v5416-preapk-production-failclosed.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path('/tmp/v5416-preapk-production-failclosed.json').read_text())
+          assert p['sourcePolicyOk'] is True
+          assert p['startupValidationRequested'] is True
+          assert p['startupValidationOk'] is False
+          assert p['productionConfig']['appEnvProduction'] is True
+          assert p['productionConfig']['appApiKeyConfigured'] is False
+          assert p['productionConfig']['sessionSecretStrong'] is False
+          assert p['productionConfig']['tradeWizeCredentialConfigured'] is False
+          assert isinstance(p['startupValidationError'], str) and p['startupValidationError']
+          print(json.dumps({
+              'result': 'PASS',
+              'startupValidationOk': p['startupValidationOk'],
+              'productionConfig': p['productionConfig'],
+              'failureWasFailClosed': True,
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Build consolidated redacted evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          source = json.loads(Path('/tmp/v5416-preapk-source-policy.json').read_text())
+          prod = json.loads(Path('/tmp/v5416-preapk-production-failclosed.json').read_text())
+          payload = {
+              'schemaVersion': 1,
+              'result': 'PASS',
+              'candidateCommit': subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip(),
+              'candidateTree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'], text=True).strip(),
+              'version': source.get('version'),
+              'sourcePolicyOk': source.get('sourcePolicyOk'),
+              'sourcePolicy': source.get('sourcePolicy'),
+              'externalGates': source.get('externalGates'),
+              'productionFailClosedWithoutRequiredConfiguration': prod.get('startupValidationOk') is False,
+              'productionConfigWithoutSecrets': prod.get('productionConfig'),
+              'secretValuesIncluded': False,
+          }
+          Path('/tmp/v5416-preapk-readiness-evidence.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(payload, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload readiness evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-PREAPK-READINESS-EVIDENCE
+          path: |
+            /tmp/v5416-preapk-source-policy.json
+            /tmp/v5416-preapk-production-failclosed.json
+            /tmp/v5416-preapk-readiness-evidence.json
+          if-no-files-found: error
+          retention-days: 30
