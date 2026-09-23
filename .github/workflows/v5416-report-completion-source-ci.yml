@@ -1,0 +1,132 @@
+name: V5.4.16 Report Completion Source CI
+
+on:
+  push:
+    branches: [v5.4.16-report-completion]
+    paths:
+      - 'patches/V5.4.16-report-completion-r3.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v5.4.16-report-completion
+
+      - name: Reassemble and verify report completion source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat patches/V5.4.16-report-r2.b64.part* > /tmp/v5416-report.patch.gz.b64
+          base64 -d /tmp/v5416-report.patch.gz.b64 > /tmp/v5416-report.patch.gz
+          echo '9ecda2754c0b66cf5ab0ad0026eda2018efeac35748fddb969da8489d9107a04  /tmp/v5416-report.patch.gz' | sha256sum -c -
+          gzip -cd /tmp/v5416-report.patch.gz > /tmp/v5416-report.patch
+          echo '3e386c1aab65b31ddb16e2733446a3f53bd6e7c4f06bd6b794f4052b5aaf660f  /tmp/v5416-report.patch' | sha256sum -c -
+          git apply --check /tmp/v5416-report.patch
+          git apply /tmp/v5416-report.patch
+          echo 'af628ff3d86bf15414a517527214edadcda0d18b11cb3f2bff61be60e8e8c755  patches/V5.4.16-report-r2-compile-fix.patch' | sha256sum -c -
+          git apply --check patches/V5.4.16-report-r2-compile-fix.patch
+          git apply patches/V5.4.16-report-r2-compile-fix.patch
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Backend and Android-backend route contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/requirements-dev.txt
+          python -m py_compile backend/main.py backend/tests/test_contracts.py backend/tests/test_android_backend_route_contract.py
+          (cd backend && PYTHONPATH=. pytest -q)
+          python -m json.tool contracts/routes-v1.json >/dev/null
+          docker build -t borsatakip-v5416-report ./backend
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Android unit tests and source compilation only
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p android --no-daemon clean testDebugUnitTest compileDebugKotlin
+
+      - name: Report acceptance static gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionCode = 556' android/app/build.gradle.kts
+          grep -q 'versionName = "5.4.16"' android/app/build.gradle.kts
+          grep -q 'Piyasalarda fırsatları yakalayın' android/app/src/main/res/layout/activity_bist_scan.xml
+          ! grep -q 'Tarama Durumu' android/app/src/main/res/layout/activity_bist_scan.xml
+          ! grep -q 'btnConfigureProvider' android/app/src/main/res/layout/activity_bist_scan.xml
+          grep -q 'BistScanForegroundService' android/app/src/main/AndroidManifest.xml
+          grep -q 'ManualScanSessionRepository' android/app/src/main/java/tr/borsatakip/v5/ui/BistScanActivity.kt
+          grep -q 'foundCount.text = if (numericState)' android/app/src/main/java/tr/borsatakip/v5/ui/OpportunityActivity.kt
+          grep -q 'Veri yok = 0 değildir' android/app/src/main/java/tr/borsatakip/v5/ui/ViopActivity.kt
+          grep -q 'all-android-backend-routes' contracts/routes-v1.json
+          ! grep -R --line-number -E 'V5\.4\.(6|7)' android/app/src/main android/app/src/test
+          ! grep -R --line-number -E '#00F080|#FF4545|#FF5A66|#AFC2D4' android/app/src/main
+          ! grep -R --line-number --exclude-dir=build -E 'btk_[A-Za-z0-9]{8,}' android backend contracts
+
+      - name: Commit verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'V5.4.16 Source CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add android backend contracts README.md
+          git commit -m 'Complete V5.4.16 report requirements and manual scan lifecycle'
+          git push origin HEAD:v5.4.16-report-completion
+
+      - name: Package verified source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/source-output
+          git archive --format=zip --output=/tmp/source-output/V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip HEAD android backend contracts README.md .github/workflows
+          cd /tmp/source-output
+          sha256sum V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip | tee V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip.sha256
+          {
+            echo 'VERSION_CODE=556'
+            echo 'VERSION_NAME=5.4.16'
+            echo 'BACKEND_TESTS=PASS'
+            echo 'ANDROID_UNIT_TESTS=PASS'
+            echo 'ANDROID_SOURCE_COMPILE=PASS'
+            echo 'APK_GENERATED=NO'
+            echo 'MANUAL_SCAN_FOREGROUND_SERVICE=ENABLED'
+            echo 'MANUAL_SCAN_PERSISTED_STATE=ENABLED'
+            echo 'OPPORTUNITY_NO_DATA_NOT_ZERO=ENABLED'
+            echo 'VIOP_NO_DATA_NOT_ZERO=ENABLED'
+            echo 'REALTIME_CAPABILITY_GATING=ENABLED'
+            echo 'FULL_ANDROID_BACKEND_ROUTE_CONTRACT=ENABLED'
+          } > provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-SOURCE-VERIFIED-REPORT-COMPLETION
+          path: /tmp/source-output/
+          if-no-files-found: error

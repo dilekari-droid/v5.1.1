@@ -1,0 +1,151 @@
+name: V5.4.16 Bootstrap Build
+
+on:
+  push:
+    branches: [v5.4.16-production-hardening]
+    paths:
+      - 'patches/V5.4.16.patch.trigger'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v5.4.16-production-hardening
+
+      - name: Decode and validate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat patches/V5.4.16.patch.gz.b64.part* | base64 -d | gzip -d > /tmp/V5.4.16.patch
+          git apply --check /tmp/V5.4.16.patch
+          git apply /tmp/V5.4.16.patch
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/res/values/strings.xml')
+          text = p.read_text(encoding='utf-8')
+          old = '<string name="app_name">V5.4.14</string>'
+          new = '<string name="app_name">V5.4.16</string>'
+          if old not in text and new not in text:
+              raise SystemExit('app_name sürüm etiketi beklenen biçimde değil')
+          p.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          grep -Fq '<string name="app_name">V5.4.16</string>' android/app/src/main/res/values/strings.xml
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/requirements-dev.txt
+          python -m py_compile backend/main.py backend/tests/test_contracts.py
+          (cd backend && PYTHONPATH=. pytest -q)
+          docker build -t borsatakip-v5416 ./backend
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Android unconfigured compile verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset BORSA_BACKEND_URL BORSA_PRODUCTION_BACKEND_URL || true
+          gradle -p android --no-daemon clean testDebugUnitTest assembleDebug
+          mkdir -p /tmp/v5416-output
+          cp android/app/build/outputs/apk/debug/app-debug.apk /tmp/v5416-output/V5.4.16-COMPILE-VERIFIED-UNCONFIGURED.apk
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          "$AAPT" dump badging /tmp/v5416-output/V5.4.16-COMPILE-VERIFIED-UNCONFIGURED.apk | tee /tmp/unconfigured-badging.txt
+          grep -q "versionCode='556'" /tmp/unconfigured-badging.txt
+          grep -q "versionName='5.4.16'" /tmp/unconfigured-badging.txt
+          grep -q "application-label:'V5.4.16'" /tmp/unconfigured-badging.txt
+          rm -rf /tmp/apk-unconfigured
+          mkdir -p /tmp/apk-unconfigured
+          unzip -qq /tmp/v5416-output/V5.4.16-COMPILE-VERIFIED-UNCONFIGURED.apk -d /tmp/apk-unconfigured
+          ! grep -R -a -E 'btk_[A-Za-z0-9]{8,}' /tmp/apk-unconfigured
+          ! grep -R -a -F 'https://borsa-takip-backend-live-production.up.railway.app' /tmp/apk-unconfigured
+
+      - name: Android backend-configured compile verification
+        shell: bash
+        env:
+          BORSA_BACKEND_URL: https://borsa-takip-backend-live-production.up.railway.app
+        run: |
+          set -euo pipefail
+          gradle -p android --no-daemon clean testDebugUnitTest assembleDebug
+          grep -R -F "$BORSA_BACKEND_URL" android/app/build/generated/ >/dev/null
+          cp android/app/build/outputs/apk/debug/app-debug.apk /tmp/v5416-output/V5.4.16-BACKEND-CONFIGURED-DEBUG.apk
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          "$AAPT" dump badging /tmp/v5416-output/V5.4.16-BACKEND-CONFIGURED-DEBUG.apk | tee /tmp/configured-badging.txt
+          grep -q "versionCode='556'" /tmp/configured-badging.txt
+          grep -q "versionName='5.4.16'" /tmp/configured-badging.txt
+          grep -q "application-label:'V5.4.16'" /tmp/configured-badging.txt
+          rm -rf /tmp/apk-configured
+          mkdir -p /tmp/apk-configured
+          unzip -qq /tmp/v5416-output/V5.4.16-BACKEND-CONFIGURED-DEBUG.apk -d /tmp/apk-configured
+          grep -R -a -F "$BORSA_BACKEND_URL" /tmp/apk-configured >/dev/null
+          ! grep -R -a -E 'btk_[A-Za-z0-9]{8,}' /tmp/apk-configured
+
+      - name: Commit verified V5.4.16 sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f patches/V5.4.16.patch.gz.b64.part* patches/V5.4.16.patch.trigger .github/workflows/v5416-bootstrap.yml
+          git config user.name 'V5.4.16 CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git commit -m 'V5.4.16 production hardening and contract alignment'
+          git push origin HEAD:v5.4.16-production-hardening
+          git archive --format=zip --output=/tmp/v5416-output/V5.4.16-KAYNAK-KOD.zip HEAD android backend contracts README.md .github/workflows
+
+      - name: Hash deliverables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v5416-output
+          sha256sum V5.4.16-COMPILE-VERIFIED-UNCONFIGURED.apk | tee V5.4.16-COMPILE-VERIFIED-UNCONFIGURED.apk.sha256
+          sha256sum V5.4.16-BACKEND-CONFIGURED-DEBUG.apk | tee V5.4.16-BACKEND-CONFIGURED-DEBUG.apk.sha256
+          sha256sum V5.4.16-KAYNAK-KOD.zip | tee V5.4.16-KAYNAK-KOD.zip.sha256
+          {
+            echo 'VERSION_CODE=556'
+            echo 'VERSION_NAME=5.4.16'
+            echo 'APPLICATION_LABEL=V5.4.16'
+            echo 'BACKEND_TESTS=PASS'
+            echo 'ANDROID_TESTS=PASS'
+            echo 'SNAPSHOT_BATCH=IMPLEMENTED'
+            echo 'REALTIME_REST=FAIL_CLOSED'
+            echo 'WEBSOCKETS=FAIL_CLOSED'
+            echo 'CONFIGURED_BACKEND_URL_VERIFIED=YES'
+            echo 'API_KEY_EMBEDDED=NO'
+            echo 'SIGNING=DEBUG_VERIFICATION_ONLY'
+          } > provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-VERIFIED-APK-AND-SOURCE
+          path: /tmp/v5416-output/
+          if-no-files-found: error

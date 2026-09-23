@@ -1,0 +1,111 @@
+name: V5.4.16 Full Hardening Apply R2
+
+on:
+  push:
+    branches: [v5.4.16-full-hardening]
+    paths:
+      - '.github/workflows/v5416-full-hardening-r2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify-apply-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v5.4.16-full-hardening
+
+      - name: Reconstruct and verify exact patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            patches/v5416-full-hardening/part00.b64 \
+            patches/v5416-full-hardening/part01.b64 \
+            patches/v5416-full-hardening/part02.b64 \
+            patches/v5416-full-hardening/part03.b64 \
+            patches/v5416-full-hardening/p040.b64 \
+            patches/v5416-full-hardening/p041.b64 \
+            patches/v5416-full-hardening/p042.b64 \
+            patches/v5416-full-hardening/p043.b64 \
+            patches/v5416-full-hardening/part05.b64 \
+            patches/v5416-full-hardening/part06.b64 \
+            patches/v5416-full-hardening/part07.b64 \
+            | base64 -d | gzip -d > /tmp/V5.4.16-FULL-HARDENING.patch
+          echo '0b1c0f09306dcece86539896157167db178b2a401aa85b9d838753ffcd47a2af  /tmp/V5.4.16-FULL-HARDENING.patch' | sha256sum -c -
+          git apply --check /tmp/V5.4.16-FULL-HARDENING.patch
+          git apply /tmp/V5.4.16-FULL-HARDENING.patch
+          git diff --check
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Backend hardening tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/requirements-dev.txt
+          python -m py_compile backend/main.py backend/e2e_smoke.py backend/tests/test_contracts.py backend/tests/test_android_backend_route_contract.py
+          (cd backend && PYTHONPATH=. pytest -q)
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Android source and verification build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p android --no-daemon clean testDebugUnitTest compileDebugKotlin compileDebugAndroidTestKotlin assembleDebug
+          test -n "$(find android/app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+
+      - name: Security and contract gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionCode = 556' android/app/build.gradle.kts
+          grep -q 'versionName = "5.4.16"' android/app/build.gradle.kts
+          grep -q 'BistScanServiceLifecyclePolicy' android/app/src/main/java/tr/borsatakip/v5/worker/BistScanForegroundService.kt
+          grep -q 'BistScanStartGate' android/app/src/main/java/tr/borsatakip/v5/ui/BistScanActivity.kt
+          grep -q 'BistScanStartGate' android/app/src/main/java/tr/borsatakip/v5/ui/OpportunityActivity.kt
+          grep -q 'discover_android_routes' backend/tests/test_android_backend_route_contract.py
+          grep -q '/v1/tradingview/signals' contracts/routes-v1.json
+          grep -q '/v1/research/foundation' contracts/routes-v1.json
+          grep -q '/v1/auth/session' contracts/routes-v1.json
+          ! grep -R --line-number --exclude-dir=build -E 'btk_[A-Za-z0-9]{8,}' android backend contracts
+
+      - name: Commit verified source hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'V5.4.16 Full Hardening CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add android backend contracts README.md \
+            .github/workflows/android-build.yml \
+            .github/workflows/backend-ci.yml \
+            .github/workflows/production-e2e.yml
+          git diff --cached --check
+          git commit -m 'V5.4.16 full production hardening and contract closure'
+          git push origin HEAD:v5.4.16-full-hardening

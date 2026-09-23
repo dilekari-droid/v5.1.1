@@ -35,6 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Core version/auth/fail-closed contracts.
           grep -Fq 'ENGINE_VERSION = "V5.4.16"' backend/main.py
           grep -Fq 'SESSION_TOKEN_SECRET' backend/main.py
           grep -Fq 'SESSION_TOKEN_MIN_SECRET_LENGTH' backend/main.py
@@ -43,12 +44,16 @@ jobs:
           grep -Fq 'viopContractsReady' backend/main.py
           grep -Fq 'attestationReady' backend/main.py
           grep -Fq 'providerWeightFormulaVerified' backend/main.py
+
+          # Central provider quota/cooldown and distributed quota hardening.
           grep -Fq 'SCANNER_REQUESTS_PER_HOUR' backend/main.py
           grep -Fq 'UPSTREAM_QUOTA_SCOPE' backend/main.py
           grep -Fq 'UPSTREAM_DISTRIBUTED_QUOTA' backend/main.py
           grep -Fq 'UPSTREAM_DISTRIBUTED_QUOTA_KEY' backend/main.py
           grep -Fq '_retry_after_seconds' backend/main.py
           grep -Fq '_provider_quota_metrics' backend/main.py
+
+          # Ingress/cache bounded-memory and persistence hardening.
           grep -Fq 'INGRESS_BUCKET_TTL_SECONDS' backend/main.py
           grep -Fq 'INGRESS_BUCKET_MAX_ENTRIES' backend/main.py
           grep -Fq '_ingress_metrics' backend/main.py
@@ -56,22 +61,30 @@ jobs:
           grep -Fq 'BAR_CACHE_MAX_TOTAL_BARS' backend/main.py
           grep -Fq 'BAR_CACHE_PERSIST_PATH' backend/main.py
           grep -Fq 'BAR_CACHE_PREWARM_SYMBOLS' backend/main.py
+
+          # Batch policy/idempotency and VIOP metadata quality.
           grep -Fq 'SNAPSHOT_BATCH_MAX_SYMBOLS' backend/main.py
           grep -Fq 'SNAPSHOT_BATCH_READ_TIMEOUT_MS' backend/main.py
           grep -Fq 'SNAPSHOT_BATCH_IDEMPOTENCY_TTL_SECONDS' backend/main.py
           grep -Fq 'VIOP_METADATA_MAX_AGE_SECONDS' backend/main.py
           grep -Fq 'VIOP_METADATA_REQUIRE_COMPLETE' backend/main.py
           grep -Fq 'VIOP_NEAR_EXPIRY_DAYS' backend/main.py
+
+          # Session revoke/rotation, optional persistent TV, and signed-attestation source gates.
           grep -Fq 'SESSION_TOKEN_PREVIOUS_KEYS_JSON' backend/main.py
           grep -Fq 'SESSION_REVOKE_STORE_PATH' backend/main.py
           grep -Fq 'TRADINGVIEW_WEBHOOK_SECRET' backend/main.py
           grep -Fq 'TRADINGVIEW_DB_PATH' backend/main.py
           grep -Fq 'ATTESTATION_PRIVATE_KEYS_JSON' backend/main.py
           grep -Fq 'ATTESTATION_ACTIVE_KEY_ID' backend/main.py
+
+          # Bidirectional route contract remains mandatory.
           grep -Fq 'all-android-backend-routes' contracts/routes-v1.json
           grep -Fq '/v1/tradingview/signals' contracts/routes-v1.json
           grep -Fq '/v1/research/foundation' contracts/routes-v1.json
           grep -Fq '/v1/auth/session' contracts/routes-v1.json
+
+          # Critical acceptance tests must remain in the suite.
           grep -Fq 'test_all_time_history_range_is_accepted_by_route_contract' backend/tests/test_contracts.py
           grep -Fq 'test_range_max_response_is_not_clipped_to_cache_limit' backend/tests/test_contracts.py
           grep -Fq 'test_all_time_capability_is_fail_closed_until_explicit_provider_verification' backend/tests/test_contracts.py

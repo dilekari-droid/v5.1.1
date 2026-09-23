@@ -1,0 +1,45 @@
+name: V5.4.16 Explicit Production Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeframes:
+        description: 'Comma separated timeframe benchmark set'
+        required: false
+        default: '1m,5m,15m,30m,60m,1d'
+      max_symbols:
+        description: 'Maximum BIST symbols (use 1000 for full universe)'
+        required: false
+        default: '1000'
+
+permissions:
+  contents: read
+
+jobs:
+  full-bist-benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install benchmark dependency
+        run: python -m pip install 'httpx==0.28.1'
+      - name: Run explicit full-BIST benchmark
+        env:
+          BORSA_BENCHMARK_BASE_URL: ${{ secrets.BORSA_E2E_BASE_URL }}
+          BORSA_BENCHMARK_API_KEY: ${{ secrets.BORSA_E2E_API_KEY }}
+          BORSA_BENCHMARK_INSTALL_ID: github-actions-v5416-benchmark
+          BORSA_BENCHMARK_TIMEFRAMES: ${{ inputs.timeframes }}
+          BORSA_BENCHMARK_MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          BORSA_BENCHMARK_COMMIT_SHA: ${{ github.sha }}
+          BORSA_BENCHMARK_ARTIFACT_PATH: /tmp/v5416-production-benchmark.json
+        run: python backend/benchmark_full_bist.py
+      - name: Upload redacted benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v5416-production-benchmark-${{ github.sha }}
+          path: /tmp/v5416-production-benchmark.json
+          if-no-files-found: error
+          retention-days: 30

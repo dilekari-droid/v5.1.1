@@ -1,0 +1,49 @@
+name: V5.4.16 Production E2E Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/production-e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install smoke dependencies
+        run: python -m pip install 'httpx==0.28.1'
+      - name: Run production E2E contract smoke
+        shell: bash
+        env:
+          BORSA_E2E_BASE_URL: https://borsa-takip-v5416-final-production.up.railway.app
+          BORSA_E2E_API_KEY: ${{ secrets.BORSA_E2E_API_KEY }}
+          BORSA_E2E_INSTALL_ID: github-actions-v5416-e2e
+          BORSA_E2E_EXPECTED_REVISION: ${{ github.sha }}
+          BORSA_E2E_SOURCE_COMMIT: ${{ github.sha }}
+          BORSA_E2E_EVIDENCE_PATH: production-e2e-evidence.json
+          BORSA_E2E_COMMIT_SHA: ${{ github.sha }}
+          BORSA_E2E_DEPLOYMENT_REVISION: ${{ vars.BORSA_E2E_DEPLOYMENT_REVISION }}
+          BORSA_E2E_ARTIFACT_PATH: production-e2e-evidence.json
+        run: |
+          set -euo pipefail
+          python backend/e2e_smoke.py 2>&1 | tee production-e2e.log
+      - name: Preserve production E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-PRODUCTION-E2E-${{ github.run_id }}
+          path: |
+            production-e2e.log
+            production-e2e-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+# verification-trigger: final-seven-item-production-e2e

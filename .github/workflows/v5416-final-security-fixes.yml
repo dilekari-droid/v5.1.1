@@ -1,0 +1,81 @@
+name: V5.4.16 Final Session Security Fixes
+
+on:
+  push:
+    branches: [v5.4.16-full-hardening]
+    paths:
+      - '.github/workflows/v5416-final-security-fixes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v5.4.16-full-hardening
+          fetch-depth: 0
+
+      - name: Apply exact final security patches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'android/app/src/main/java/tr/borsatakip/v5/data/SettingsStore.kt',
+              '            if (changed) invalidateProviderReadiness()\n',
+              '            if (changed) {\n                clearBackendSessionToken()\n                invalidateProviderReadiness()\n            }\n',
+          )
+
+          replace_once(
+              'android/app/src/main/java/tr/borsatakip/v5/data/MarketCapabilityClient.kt',
+              '''            val request = BackendRequestSecurity.apply(Request.Builder().url(url), settings)\n                .header("Accept", "application/json").get().build()\n            client.newCall(request).execute().use { response ->\n                val body=response.body?.string().orEmpty()\n                require(response.isSuccessful) { "Provider capability HTTP ${response.code}: ${body.take(240)}" }\n                require(body.isNotBlank()) { "Provider capability yanıtı boş." }\n                val snapshot = parse(JSONObject(body))\n''',
+              '''            fun request() = BackendRequestSecurity.apply(Request.Builder().url(url), settings)\n                .header("Accept", "application/json").get().build()\n            var response = client.newCall(request()).execute()\n            if (response.code == 401 && settings.backendSessionToken.isNotBlank()) {\n                response.close()\n                settings.clearBackendSessionToken()\n                response = client.newCall(request()).execute()\n            }\n            response.use { finalResponse ->\n                val body=finalResponse.body?.string().orEmpty()\n                require(finalResponse.isSuccessful) { "Provider capability HTTP ${finalResponse.code}: ${body.take(240)}" }\n                require(body.isNotBlank()) { "Provider capability yanıtı boş." }\n                val snapshot = parse(JSONObject(body))\n''',
+          )
+
+          replace_once(
+              'backend/main.py',
+              '''async def _reject_disabled_websocket(websocket: WebSocket, feature: str) -> None:\n    authorization = websocket.headers.get("authorization")\n    if APP_API_KEY and authorization != f"Bearer {APP_API_KEY}":\n        await websocket.close(code=1008, reason="BACKEND_AUTH_INVALID")\n        return\n''',
+              '''async def _reject_disabled_websocket(websocket: WebSocket, feature: str) -> None:\n    authorization = websocket.headers.get("authorization", "").strip()\n    installation_id = websocket.headers.get("x-install-id", "").strip()\n    auth_valid = not APP_API_KEY\n    if APP_API_KEY and authorization == f"Bearer {APP_API_KEY}":\n        auth_valid = True\n    elif authorization.startswith("BorsaSession "):\n        token = authorization.removeprefix("BorsaSession ").strip()\n        auth_valid = _verify_session_token(token, expected_installation_id=installation_id)\n    if APP_API_KEY and not auth_valid:\n        await websocket.close(code=1008, reason="BACKEND_AUTH_INVALID")\n        return\n''',
+          )
+          PY
+          git diff --check
+          git diff --exit-code --quiet && { echo 'No patch produced'; exit 1; } || true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Backend regression tests
+        shell: bash
+        run: |
+          python -m pip install -r backend/requirements-dev.txt
+          python -m py_compile backend/main.py backend/tests/*.py
+          (cd backend && PYTHONPATH=. pytest -q)
+
+      - name: Commit final fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'V5.4.16 Final Hardening CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add android/app/src/main/java/tr/borsatakip/v5/data/SettingsStore.kt \
+                  android/app/src/main/java/tr/borsatakip/v5/data/MarketCapabilityClient.kt \
+                  backend/main.py
+          git diff --cached --check
+          git commit -m 'V5.4.16 finalize installation-bound session security'
+          git push origin HEAD:v5.4.16-full-hardening

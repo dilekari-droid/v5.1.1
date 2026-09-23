@@ -1,0 +1,66 @@
+name: V5.4.16 Finalize Railway Health
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v5416-finalize-health-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch Railway health route and regression test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          main = Path('backend/main.py')
+          s = main.read_text()
+          old = '''@app.get("/health")\n@app.get("/v1/health")\nasync def health(authorization: str | None = Header(default=None)):\n    require_app_auth(authorization)\n    return {\n'''
+          new = '''@app.get("/health")\n@app.get("/v1/health")\nasync def health():\n    # Public liveness/readiness endpoint for Railway and external health probes.\n    # Protected API routes remain behind require_app_auth().\n    return {\n'''
+          if old not in s and new not in s:
+              raise SystemExit('health block not found')
+          if old in s:
+              main.write_text(s.replace(old, new, 1))
+
+          tests = Path('backend/tests/test_contracts.py')
+          s = tests.read_text()
+          anchor = 'def test_session_token_http_auth_is_bound_to_installation_header(monkeypatch):\n'
+          insert = '''def test_health_is_public_but_data_routes_remain_protected(monkeypatch):\n    monkeypatch.setattr(main, "APP_API_KEY", "bootstrap-key")\n    health_response = client.get("/v1/health")\n    protected_response = client.get("/v1/bist/symbols")\n    assert health_response.status_code == 200\n    assert protected_response.status_code == 401\n\n\n'''
+          if insert not in s:
+              if anchor not in s:
+                  raise SystemExit('test anchor not found')
+              tests.write_text(s.replace(anchor, insert + anchor, 1))
+          PY
+      - name: Install backend test dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: Run backend verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile backend/main.py backend/tests/test_contracts.py backend/tests/test_android_backend_route_contract.py
+          (cd backend && PYTHONPATH=. pytest -q)
+      - name: Commit verified health fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/main.py backend/tests/test_contracts.py
+          if git diff --cached --quiet; then
+            echo 'No changes required.'
+            exit 0
+          fi
+          git commit -m 'fix: make Railway health probe public'
+          git push origin HEAD:main

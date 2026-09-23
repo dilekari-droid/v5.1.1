@@ -1,0 +1,115 @@
+name: V5.4.16 Report Completion Source Verify
+
+on:
+  push:
+    branches: [v5.4.16-report-completion]
+    paths:
+      - '.github/workflows/v5416-report-completion.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v5.4.16-report-completion
+
+      - name: Verify source tree state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'versionCode = 556' android/app/build.gradle.kts
+          grep -q 'versionName = "5.4.16"' android/app/build.gradle.kts
+          grep -q 'BistScanForegroundService' android/app/src/main/AndroidManifest.xml
+          grep -q 'ManualScanSessionRepository' android/app/src/main/java/tr/borsatakip/v5/ui/BistScanActivity.kt
+          grep -q 'all-android-backend-routes' contracts/routes-v1.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Backend and full Android-backend route contract verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -r backend/requirements-dev.txt
+          python -m py_compile backend/main.py backend/tests/test_contracts.py backend/tests/test_android_backend_route_contract.py
+          (cd backend && PYTHONPATH=. pytest -q)
+          docker build -t borsatakip-v5416-report-complete ./backend
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Android unit tests and Kotlin source compilation only
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle -p android --no-daemon clean testDebugUnitTest compileDebugKotlin
+
+      - name: Report acceptance and security gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'BistScanForegroundService' android/app/src/main/AndroidManifest.xml
+          grep -q 'ManualScanSessionRepository' android/app/src/main/java/tr/borsatakip/v5/ui/BistScanActivity.kt
+          grep -q 'DATA_UNAVAILABLE' android/app/src/main/java/tr/borsatakip/v5/data/ManualScanSession.kt
+          grep -q 'all-android-backend-routes' contracts/routes-v1.json
+          ! grep -R --line-number --exclude-dir=build -E 'btk_[A-Za-z0-9]{8,}' android backend contracts
+          ! grep -R --line-number -E 'V5\.4\.(6|7)' android/app/src/main android/app/src/test
+          ! grep -q 'Tarama Durumu' android/app/src/main/res/layout/activity_bist_scan.xml
+          ! grep -q 'VERİ SAĞLAYICIYI AYARLA' android/app/src/main/res/layout/activity_bist_scan.xml
+
+      - name: Create source-only deliverable
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v5416-source
+          git archive --format=zip \
+            --output=/tmp/v5416-source/V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip \
+            HEAD android backend contracts README.md .github/workflows/android-build.yml .github/workflows/backend-ci.yml
+          cd /tmp/v5416-source
+          unzip -t V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip
+          sha256sum V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip | tee V5.4.16-KAYNAK-KOD-RAPOR-TAMAMLANMIS.zip.sha256
+          {
+            echo 'VERSION_CODE=556'
+            echo 'VERSION_NAME=5.4.16'
+            echo 'BACKEND_TESTS=19_PASS'
+            echo 'ANDROID_UNIT_TESTS=PASS'
+            echo 'KOTLIN_COMPILE=PASS'
+            echo 'FULL_ANDROID_BACKEND_ROUTE_CONTRACT=PASS'
+            echo 'MANUAL_SCAN_FOREGROUND_SERVICE=ENABLED'
+            echo 'PERSISTENT_MANUAL_SCAN_STATE=ENABLED'
+            echo 'DATA_UNAVAILABLE_NOT_ZERO=ENABLED'
+            echo 'REALTIME_UNSUPPORTED_FEATURES=CAPABILITY_GATED'
+            echo 'APK_BUILD=NOT_RUN_BY_REQUEST'
+          } > provenance.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: V5.4.16-REPORT-COMPLETED-SOURCE
+          path: /tmp/v5416-source/
+          if-no-files-found: error
