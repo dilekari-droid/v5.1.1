@@ -23,6 +23,7 @@ jobs:
       - name: Verify deployed source provenance
         shell: bash
         env:
+          BORSA_E2E_BASE_URL: https://borsa-takip-v5416-final-production.up.railway.app
           BORSA_E2E_EXPECTED_REVISION: ${{ github.sha }}
           BORSA_E2E_DEPLOYMENT_REVISION: ${{ vars.BORSA_E2E_DEPLOYMENT_REVISION }}
           BORSA_E2E_PROVENANCE_ARTIFACT_PATH: production-e2e-provenance.json
