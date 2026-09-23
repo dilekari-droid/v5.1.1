@@ -1,0 +1,54 @@
+name: V5.1.1 R2 Reconcile Hardening
+
+on:
+  push:
+    branches:
+      - hardening/v511-close-gaps-r2
+    paths:
+      - '.github/workflows/v511-r2-reconcile.yml'
+      - '.github/tmp/v511-r2-reconcile.py'
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hardening/v511-close-gaps-r2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reconcile verified hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/tmp/v511-r2-reconcile.py
+          python -m pip install --disable-pip-version-check -q -r backend/requirements.txt pytest pytest-asyncio
+          python -m py_compile backend/main.py backend/e2e_smoke.py backend/e2e_provenance.py backend/preapk_readiness.py
+          (cd backend && PYTHONPATH=. python -m pytest -q)
+          python - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          files = list(pathlib.Path('android/app/src/main/res/layout').glob('*.xml'))
+          for path in files:
+              ET.parse(path)
+          print(f'XML parse PASS: {len(files)} files')
+          PY
+          grep -q 'KEY_SHOWING_UNDERLYING' android/app/src/main/java/tr/borsatakip/v5/ui/ViopActivity.kt
+          grep -q 'full_activity_reopen' android/app/src/androidTest/java/tr/borsatakip/v5/ui/UiUxV3AcceptanceInstrumentationTest.kt
+          git diff --check
+      - name: Commit reconciled non-workflow source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend android .github/scripts/run-v5416-instrumentation.sh
+          git status --short
+          test -n "$(git diff --cached --name-only)"
+          git commit -m 'hardening: reconcile remaining V5.1.1 source gaps'
+          git push origin HEAD:hardening/v511-close-gaps-r2
