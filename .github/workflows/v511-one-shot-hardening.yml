@@ -1,0 +1,112 @@
+name: V5.1.1 One-Shot Hardening Closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v511-one-shot-hardening.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply source-side hardening fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('backend/main.py')
+          s = p.read_text()
+          s = s.replace('from datetime import datetime, timezone', 'from datetime import datetime, timedelta, timezone', 1)
+
+          old = 'BAR_CACHE_TTL_SECONDS = max(1, int(os.getenv("BAR_CACHE_TTL_SECONDS", "30")))\n'
+          new = old + 'BAR_CACHE_OPEN_SESSION_TTL_SECONDS = max(1, int(os.getenv("BAR_CACHE_OPEN_SESSION_TTL_SECONDS", str(BAR_CACHE_TTL_SECONDS))))\nBAR_CACHE_CLOSED_SESSION_TTL_SECONDS = max(BAR_CACHE_OPEN_SESSION_TTL_SECONDS, int(os.getenv("BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", "300")))\nBAR_CACHE_DAILY_TTL_SECONDS = max(BAR_CACHE_CLOSED_SESSION_TTL_SECONDS, int(os.getenv("BAR_CACHE_DAILY_TTL_SECONDS", "900")))\n'
+          if old not in s:
+              raise SystemExit('BAR cache config anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '''    if response.status_code == 429:\n        retry_after = response.headers.get("Retry-After", "").strip()\n        headers = {"Retry-After": retry_after} if retry_after else None\n        raise HTTPException(\n            status_code=429,\n            detail=f"UPSTREAM_RATE_LIMIT{(': retry-after=' + retry_after) if retry_after else ''}",\n            headers=headers,\n        )\n    if response.status_code >= 400:\n        raise HTTPException(status_code=502, detail=f"UPSTREAM_HTTP_{response.status_code}: {response.text[:500]}")\n'''
+          new = '''    if response.status_code in {429, 503}:\n        retry_after = response.headers.get("Retry-After", "").strip()\n        headers = {"Retry-After": retry_after} if retry_after else None\n        detail_code = "UPSTREAM_RATE_LIMIT" if response.status_code == 429 else "UPSTREAM_UNAVAILABLE"\n        raise HTTPException(\n            status_code=response.status_code,\n            detail=f"{detail_code}{(': retry-after=' + retry_after) if retry_after else ''}",\n            headers=headers,\n        )\n    if response.status_code >= 400:\n        raise HTTPException(status_code=502, detail=f"UPSTREAM_HTTP_{response.status_code}: {response.text[:500]}")\n'''
+          if old not in s:
+              raise SystemExit('upstream status anchor missing')
+          s = s.replace(old, new, 1)
+
+          s = s.replace(
+              '"""Shared market-data pacing + concurrency + bounded 429 retry.\n\n    Retry-After is promoted to a process-wide cooldown instead of sleeping only the coroutine\n    that observed the 429. This keeps concurrent bar/recent-tick callers from immediately\n    hitting the provider again during its requested backoff window.\n    """',
+              '"""Shared market-data pacing + concurrency + bounded 429/503 Retry-After retry.\n\n    Retry-After is promoted to a process-wide cooldown instead of sleeping only the coroutine\n    that observed the 429/503. This keeps concurrent bar/recent-tick callers from immediately\n    hitting the provider again during its requested backoff window.\n    """',
+              1,
+          )
+
+          old = '''                if exc.status_code != 429:\n                    raise\n                _provider_quota_metrics["rateLimited"] = int(_provider_quota_metrics.get("rateLimited", 0)) + 1\n                if attempt < SCANNER_RETRY_COUNT:\n                    _provider_quota_metrics["retries"] = int(_provider_quota_metrics.get("retries", 0)) + 1\n                retry_after_seconds = _retry_after_seconds(exc) or 0.0\n                exponential_seconds = (SCANNER_RETRY_BASE_MS * (2**attempt)) / 1000.0\n                await _extend_upstream_cooldown(max(exponential_seconds, retry_after_seconds))\n                if attempt >= SCANNER_RETRY_COUNT:\n                    raise\n'''
+          new = '''                retry_after_seconds = _retry_after_seconds(exc) or 0.0\n                retryable = exc.status_code == 429 or (exc.status_code == 503 and retry_after_seconds > 0)\n                if not retryable:\n                    raise\n                if exc.status_code == 429:\n                    _provider_quota_metrics["rateLimited"] = int(_provider_quota_metrics.get("rateLimited", 0)) + 1\n                else:\n                    _provider_quota_metrics["unavailableRetryAfter"] = int(_provider_quota_metrics.get("unavailableRetryAfter", 0)) + 1\n                if attempt < SCANNER_RETRY_COUNT:\n                    _provider_quota_metrics["retries"] = int(_provider_quota_metrics.get("retries", 0)) + 1\n                exponential_seconds = (SCANNER_RETRY_BASE_MS * (2**attempt)) / 1000.0\n                await _extend_upstream_cooldown(max(exponential_seconds, retry_after_seconds))\n                if attempt >= SCANNER_RETRY_COUNT:\n                    raise\n'''
+          if old not in s:
+              raise SystemExit('retry gate anchor missing')
+          s = s.replace(old, new, 1)
+
+          anchor = 'async def _cached_market_bars(\n'
+          insert = '''def _market_session_is_open(market: str, now_utc: datetime | None = None) -> bool:\n    """Conservative exchange-session classifier used only for cache freshness TTLs."""\n    current = now_utc or datetime.now(timezone.utc)\n    local = current.astimezone(timezone(timedelta(hours=3)))\n    if local.weekday() >= 5:\n        return False\n    minutes = local.hour * 60 + local.minute\n    if market.upper() in {"BIST", "VIOP"}:\n        return 10 * 60 <= minutes < 18 * 60 + 10\n    return True\n\n\ndef cache_freshness_ttl_seconds(market: str, interval: str, now_utc: datetime | None = None) -> int:\n    """Single cache freshness policy for every market-history path."""\n    canonical = normalize_interval(interval)\n    if canonical == "1d":\n        return BAR_CACHE_DAILY_TTL_SECONDS\n    if _market_session_is_open(market, now_utc):\n        return BAR_CACHE_OPEN_SESSION_TTL_SECONDS\n    return BAR_CACHE_CLOSED_SESSION_TTL_SECONDS\n\n\n'''
+          if anchor not in s:
+              raise SystemExit('cache function anchor missing')
+          s = s.replace(anchor, insert + anchor, 1)
+
+          old = '        fresh = bool(cached) and now - float(entry.get("at", 0.0)) <= BAR_CACHE_TTL_SECONDS\n'
+          new = '        freshness_ttl = cache_freshness_ttl_seconds(market, canonical)\n        fresh = bool(cached) and now - float(entry.get("at", 0.0)) <= freshness_ttl\n'
+          if old not in s:
+              raise SystemExit('freshness anchor missing')
+          s = s.replace(old, new, 1)
+
+          old = '            "cacheTtlMs": BAR_CACHE_TTL_SECONDS * 1000,\n'
+          new = '''            "cacheTtlMs": BAR_CACHE_OPEN_SESSION_TTL_SECONDS * 1000,\n            "cacheFreshnessPolicy": {\n                "openSessionMs": BAR_CACHE_OPEN_SESSION_TTL_SECONDS * 1000,\n                "closedSessionMs": BAR_CACHE_CLOSED_SESSION_TTL_SECONDS * 1000,\n                "dailyMs": BAR_CACHE_DAILY_TTL_SECONDS * 1000,\n            },\n'''
+          if old not in s:
+              raise SystemExit('scan policy anchor missing')
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path('backend/tests/test_contracts.py')
+          s = p.read_text()
+          s = s.replace('import time\nfrom pathlib import Path', 'import time\nfrom datetime import datetime, timezone\nfrom pathlib import Path', 1)
+          anchor = '@pytest.mark.asyncio\nasync def test_recent_ticks_use_shared_market_data_quota_gate(monkeypatch):\n'
+          insert = '''@pytest.mark.asyncio\nasync def test_503_retry_after_sets_process_wide_market_data_cooldown(monkeypatch):\n    monkeypatch.setattr(main, "SCANNER_RETRY_COUNT", 0)\n    monkeypatch.setattr(main, "SCANNER_PACING_MS", 1)\n    monkeypatch.setattr(main, "SCANNER_RETRY_BASE_MS", 10)\n    main._scanner_next_allowed_at = 0.0\n\n    async def unavailable(path, params):\n        raise main.HTTPException(status_code=503, detail="maintenance", headers={"Retry-After": "0.05"})\n\n    monkeypatch.setattr(main, "_raw_upstream_get", unavailable)\n    with pytest.raises(main.HTTPException) as exc_info:\n        await main.scanner_upstream_get("/api/v1/market-data/bars", {"symbol": "THYAO"})\n    assert exc_info.value.status_code == 503\n    assert main._scanner_next_allowed_at - time.monotonic() > 0.02\n    assert main._provider_quota_metrics["unavailableRetryAfter"] == 1\n\n\ndef test_cache_freshness_policy_is_centralized_by_session_and_interval(monkeypatch):\n    monkeypatch.setattr(main, "BAR_CACHE_OPEN_SESSION_TTL_SECONDS", 30)\n    monkeypatch.setattr(main, "BAR_CACHE_CLOSED_SESSION_TTL_SECONDS", 300)\n    monkeypatch.setattr(main, "BAR_CACHE_DAILY_TTL_SECONDS", 900)\n    open_session = datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc)\n    closed_session = datetime(2026, 9, 23, 19, 0, tzinfo=timezone.utc)\n    assert main.cache_freshness_ttl_seconds("BIST", "5m", open_session) == 30\n    assert main.cache_freshness_ttl_seconds("BIST", "5m", closed_session) == 300\n    assert main.cache_freshness_ttl_seconds("BIST", "1d", open_session) == 900\n\n\n'''
+          if anchor not in s:
+              raise SystemExit('test insertion anchor missing')
+          s = s.replace(anchor, insert + anchor, 1)
+          p.write_text(s)
+
+          p = Path('backend/README.md')
+          s = p.read_text()
+          s = s.replace('Upstream HTTP 429 `Retry-After` extends a process-wide market-data cooldown, and stale-quote `recent-ticks` recovery uses that same gate.', 'Upstream HTTP 429 or 503 responses carrying `Retry-After` extend a process-wide market-data cooldown, and stale-quote `recent-ticks` recovery uses that same gate.')
+          s = s.replace('A rolling bar cache reuses verified closed candles and supports incremental windows while bounding idle age, key count and total candle count.', 'A rolling bar cache reuses verified closed candles and supports incremental windows while bounding idle age, key count and total candle count. Cache freshness is centralized: open-session intraday, closed-session intraday and daily bars use one shared policy with separately configurable TTLs.')
+          p.write_text(s)
+
+          p = Path('contracts/api-v1.md')
+          s = p.read_text()
+          marker = "The backend must not invent a bar-count weight formula. When the provider's official formula is verified, the configurable weight model can be upgraded without changing the Android wire contract."
+          if marker in s:
+              s = s.replace(marker, marker + '\n\nHTTP 429 and HTTP 503 responses that include `Retry-After` extend the same process-wide/distributed cooldown gate before a retry. Responses without a provider retry window are not silently treated as rate-limit signals.\n\nHistory cache freshness is centralized in one policy: open-session intraday, closed-session intraday and daily TTLs are configurable independently; all history paths use the same policy decision.', 1)
+          p.write_text(s)
+          PY
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -q -r backend/requirements.txt pytest pytest-asyncio
+      - name: Verify backend suite
+        run: PYTHONPATH=backend pytest -q backend/tests
+      - name: Commit verified fixes and remove one-shot workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/v511-one-shot-hardening.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/main.py backend/tests/test_contracts.py backend/README.md contracts/api-v1.md .github/workflows/v511-one-shot-hardening.yml
+          git commit -m "hardening: close cooldown and cache freshness gaps"
+          git push origin HEAD:main
