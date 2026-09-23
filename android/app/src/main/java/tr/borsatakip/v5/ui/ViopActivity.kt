@@ -65,6 +65,7 @@ class ViopActivity : BaseActivity() {
     private var uiCategory = UiCategory.ALL
     private var uiDirection = UiDirection.ALL
     private var uiSort = UiSort.RANKING
+    private var advancedFilterExpanded = false
     private val scanGuard = ViopScanGenerationGuard()
     private var scanJob: Job? = null
     private var lastProductionResult: ViopScanResult? = null
@@ -83,10 +84,12 @@ class ViopActivity : BaseActivity() {
         providerStatus = findViewById(R.id.providerStatus)
         scanButton = findViewById(R.id.refresh)
         list.layoutManager = LinearLayoutManager(this, RecyclerView.VERTICAL, false)
+        restoreUiState(savedInstanceState)
         findViewById<TextView>(R.id.openSettings).setOnClickListener { openViopSettings() }
         findViewById<TextView>(R.id.openFavorites).setOnClickListener { startActivity(Intent(this, FavoritesActivity::class.java)) }
         findViewById<TextView>(R.id.openNotifications).setOnClickListener { startActivity(Intent(this, NotificationsActivity::class.java)) }
         bindDashboardFilters()
+        restoreFilterWidgets()
         findViewById<TextView>(R.id.navAnalysis)?.setOnClickListener { startActivity(Intent(this, TechnicalAnalysisActivity::class.java)) }
         findViewById<TextView>(R.id.navNews)?.setOnClickListener { startActivity(Intent(this, NewsActivity::class.java)) }
         findViewById<TextView>(R.id.modeProduction).setOnClickListener {
@@ -533,6 +536,38 @@ class ViopActivity : BaseActivity() {
         applyDashboardFilter()
     }
 
+
+    private fun restoreUiState(state: Bundle?) {
+        if (state == null) return
+        uiQuery = state.getString(STATE_QUERY).orEmpty()
+        uiCategory = runCatching { UiCategory.valueOf(state.getString(STATE_CATEGORY).orEmpty()) }.getOrDefault(UiCategory.ALL)
+        uiDirection = runCatching { UiDirection.valueOf(state.getString(STATE_DIRECTION).orEmpty()) }.getOrDefault(UiDirection.ALL)
+        uiSort = runCatching { UiSort.valueOf(state.getString(STATE_SORT).orEmpty()) }.getOrDefault(UiSort.RANKING)
+        showingUnderlying = state.getBoolean(STATE_SHOWING_UNDERLYING, false)
+        advancedFilterExpanded = state.getBoolean(STATE_ADVANCED_FILTER, false)
+    }
+
+    private fun restoreFilterWidgets() {
+        val search = findViewById<EditText>(R.id.viopSearch)
+        if (search.text?.toString() != uiQuery) {
+            search.setText(uiQuery)
+            search.setSelection(search.text?.length ?: 0)
+        }
+        findViewById<View>(R.id.advancedFilterRow).visibility = if (advancedFilterExpanded) View.VISIBLE else View.GONE
+        updateSortLabel()
+        updateDashboardFilterColors()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_QUERY, uiQuery)
+        outState.putString(STATE_CATEGORY, uiCategory.name)
+        outState.putString(STATE_DIRECTION, uiDirection.name)
+        outState.putString(STATE_SORT, uiSort.name)
+        outState.putBoolean(STATE_SHOWING_UNDERLYING, showingUnderlying)
+        outState.putBoolean(STATE_ADVANCED_FILTER, advancedFilterExpanded)
+        super.onSaveInstanceState(outState)
+    }
+
     private fun bindDashboardFilters() {
         findViewById<EditText>(R.id.viopSearch).addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -577,8 +612,8 @@ class ViopActivity : BaseActivity() {
             applyDashboardFilter()
         }
         findViewById<Button>(R.id.detailedFilter).setOnClickListener {
-            val advanced = findViewById<View>(R.id.advancedFilterRow)
-            advanced.visibility = if (advanced.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            advancedFilterExpanded = !advancedFilterExpanded
+            findViewById<View>(R.id.advancedFilterRow).visibility = if (advancedFilterExpanded) View.VISIBLE else View.GONE
         }
         findViewById<Button>(R.id.sortMode).setOnClickListener {
             uiSort = when (uiSort) {
@@ -772,6 +807,12 @@ class ViopActivity : BaseActivity() {
 
     companion object {
         private const val AUTO_TEST_COOLDOWN_MS = 30_000L
+        private const val STATE_QUERY = "viop.ui.query"
+        private const val STATE_CATEGORY = "viop.ui.category"
+        private const val STATE_DIRECTION = "viop.ui.direction"
+        private const val STATE_SORT = "viop.ui.sort"
+        private const val STATE_SHOWING_UNDERLYING = "viop.ui.showingUnderlying"
+        private const val STATE_ADVANCED_FILTER = "viop.ui.advancedFilter"
     }
 
 }

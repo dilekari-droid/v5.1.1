@@ -19,7 +19,7 @@ def test_source_policy_is_fail_closed_for_unverified_external_features():
     assert payload["sourcePolicyOk"] is True
     assert payload["sourcePolicy"]["fakeRealtimeForbidden"] is True
     assert payload["sourcePolicy"]["fakeAttestationForbidden"] is True
-    assert payload["sourcePolicy"]["providerWeightFormulaFailClosed"] is True
+    assert payload["sourcePolicy"]["providerWeightFormulaNoGuess"] is True
     assert payload["externalGates"]["providerWeightFormulaVerified"] is False
     assert payload["externalGates"]["fullBistFiveMinuteSlaVerified"] is False
 

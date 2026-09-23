@@ -130,8 +130,8 @@
                 android:id="@+id/refresh"
                 style="@style/ScanFilterButton"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:minHeight="44dp"
+                android:layout_height="48dp"
+                android:minHeight="48dp"
                 android:minWidth="72dp"
                 android:paddingHorizontal="8dp"
                 android:text="Yenile"
@@ -394,9 +394,9 @@
                 android:id="@+id/sortMode"
                 style="@style/ScanFilterButton"
                 android:layout_width="wrap_content"
-                android:layout_height="46dp"
+                android:layout_height="48dp"
                 android:layout_marginStart="5dp"
-                android:minHeight="46dp"
+                android:minHeight="48dp"
                 android:text="Sırala: Ranking"
                 android:textAllCaps="false"
                 android:textSize="9sp" />
@@ -411,11 +411,11 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
-                <Button android:id="@+id/filterAll" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:text="TÜMÜ" />
-                <Button android:id="@+id/filterLong" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="LONG" />
-                <Button android:id="@+id/filterShort" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="SHORT" />
-                <Button android:id="@+id/filterWatch" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="İZLE" />
-                <Button android:id="@+id/detailedFilter" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="8dp" android:text="Detaylı Filtre" android:textAllCaps="false" />
+                <Button android:id="@+id/filterAll" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:text="TÜMÜ" />
+                <Button android:id="@+id/filterLong" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="LONG" />
+                <Button android:id="@+id/filterShort" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="SHORT" />
+                <Button android:id="@+id/filterWatch" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="İZLE" />
+                <Button android:id="@+id/detailedFilter" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="8dp" android:text="Detaylı Filtre" android:textAllCaps="false" />
             </LinearLayout>
         </HorizontalScrollView>
 
@@ -430,11 +430,11 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
-                <Button android:id="@+id/filterIndex" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:text="Endeks" />
-                <Button android:id="@+id/filterEquity" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="Pay" />
-                <Button android:id="@+id/filterFx" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="Döviz" />
-                <Button android:id="@+id/filterCommodity" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="Emtia" />
-                <Button android:id="@+id/filterRate" style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:text="Faiz" />
+                <Button android:id="@+id/filterIndex" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:text="Endeks" />
+                <Button android:id="@+id/filterEquity" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="Pay" />
+                <Button android:id="@+id/filterFx" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="Döviz" />
+                <Button android:id="@+id/filterCommodity" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="Emtia" />
+                <Button android:id="@+id/filterRate" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="4dp" android:text="Faiz" />
                 <Button style="@style/ScanFilterButton" android:layout_height="40dp" android:minHeight="40dp" android:layout_marginStart="4dp" android:enabled="false" android:text="Opsiyon: kapsam dışı" android:textAllCaps="false" />
             </LinearLayout>
         </HorizontalScrollView>
