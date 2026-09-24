@@ -53,12 +53,24 @@ jobs:
             echo 'V6 source/reference contamination detected in V5.1.1 tree' >&2
             exit 1
           fi
-          test -f android/app/src/main/java/tr/borsatakip/v5/ui/UiTruthPolicy.kt
-          grep -q 'UiTruthPolicy::canShowOpportunity' android/app/src/main/java/tr/borsatakip/v5/ui/StocksActivity.kt
-          grep -q 'UiTruthPolicy.canShowStock' android/app/src/main/java/tr/borsatakip/v5/ui/MainActivity.kt
-          grep -q 'UiTruthPolicy.canShowViopQuote' android/app/src/main/java/tr/borsatakip/v5/ui/ViopActivity.kt
-          grep -q 'VİOP LONG\\n—' android/app/src/main/res/layout/activity_viop.xml
-          ! grep -q 'VİOP LONG\\n0' android/app/src/main/res/layout/activity_viop.xml
+          python - <<'PY'
+          from pathlib import Path
+          policy = Path('android/app/src/main/java/tr/borsatakip/v5/ui/UiTruthPolicy.kt')
+          assert policy.is_file(), 'UiTruthPolicy.kt missing'
+          for rel in [
+              'android/app/src/main/java/tr/borsatakip/v5/ui/StocksActivity.kt',
+              'android/app/src/main/java/tr/borsatakip/v5/ui/MainActivity.kt',
+              'android/app/src/main/java/tr/borsatakip/v5/ui/ViopActivity.kt',
+              'android/app/src/main/java/tr/borsatakip/v5/ui/OpportunityActivity.kt',
+              'android/app/src/main/java/tr/borsatakip/v5/ui/StockDetailActivity.kt',
+          ]:
+              text = Path(rel).read_text()
+              assert 'UiTruthPolicy' in text, f'UiTruthPolicy not wired in {rel}'
+          xml = Path('android/app/src/main/res/layout/activity_viop.xml').read_text()
+          assert r'VİOP LONG\n—' in xml, 'VIOP unavailable LONG must default to dash'
+          assert r'VİOP LONG\n0' not in xml, 'VIOP unavailable LONG still defaults to zero'
+          print('UI truth semantic guards PASS')
+          PY
           git diff --check
 
       - name: Verify backend regression suite
