@@ -173,40 +173,35 @@ class SettingsActivity : BaseActivity() {
             .show()
     }
 
+    private fun toneColor(tone: UiStatusTone): Int = when (tone) {
+        UiStatusTone.POSITIVE -> R.color.green
+        UiStatusTone.WARNING -> R.color.yellow
+        UiStatusTone.NEGATIVE -> R.color.red
+        UiStatusTone.MUTED -> R.color.text_muted
+        UiStatusTone.INFO -> R.color.blue
+    }
+
     private fun refreshDashboard() {
         val snapshot = readiness.localConfigState()
         findViewById<TextView>(R.id.versionBadge).text = "B${BuildConfig.VERSION_CODE} • ${BuildConfig.VERSION_NAME}"
 
         val statusBadge = findViewById<TextView>(R.id.systemStatusBadge)
         val statusSummary = findViewById<TextView>(R.id.systemStatusSummary)
-        when (snapshot.state) {
-            ProviderState.PROVIDER_READY -> {
-                if (snapshot.message.contains("KAPANIŞ", ignoreCase = true)) setBadge(statusBadge, "KAPANIŞ HAZIR", R.color.yellow)
-                else setBadge(statusBadge, "HAZIR", R.color.green)
-            }
-            ProviderState.PROVIDER_STALE_READY -> when {
-                snapshot.message.contains("GECİKMELİ", ignoreCase = true) -> setBadge(statusBadge, "GECİKMELİ ANALİZ", R.color.yellow)
-                snapshot.message.contains("KAPANIŞ", ignoreCase = true) -> setBadge(statusBadge, "KAPANIŞ HAZIR", R.color.yellow)
-                else -> setBadge(statusBadge, "YENİDEN TEST", R.color.yellow)
-            }
-            ProviderState.PROVIDER_ERROR -> setBadge(statusBadge, "HATA", R.color.red)
-            ProviderState.PROVIDER_TESTING -> setBadge(statusBadge, "TEST EDİLİYOR", R.color.blue)
-            ProviderState.PROVIDER_CONFIGURED -> setBadge(statusBadge, "TEST GEREKLİ", R.color.yellow)
-            ProviderState.PROVIDER_NOT_CONFIGURED -> setBadge(statusBadge, "YAPILANDIRILMAMIŞ", R.color.text_muted)
-        }
+        val providerPresentation = UiTruthPolicy.providerStatus(snapshot)
+        setBadge(statusBadge, providerPresentation.badge, toneColor(providerPresentation.tone))
         statusSummary.text = buildString {
             append(snapshot.message)
             if (snapshot.testedAt > 0L) append(" • Son kontrol ${formatTime(snapshot.testedAt)}")
         }
 
         val connectionBadge = findViewById<TextView>(R.id.connectionBadge)
-        when (snapshot.state) {
-            ProviderState.PROVIDER_READY -> setBadge(connectionBadge, "BAĞLI", R.color.green)
-            ProviderState.PROVIDER_ERROR -> setBadge(connectionBadge, "HATA", R.color.red)
-            ProviderState.PROVIDER_NOT_CONFIGURED -> setBadge(connectionBadge, "EKSİK", R.color.text_muted)
-            ProviderState.PROVIDER_STALE_READY -> if (snapshot.message.contains("GECİKMELİ", true) || snapshot.message.contains("KAPANIŞ", true)) setBadge(connectionBadge, "BAĞLI • GECİKMELİ", R.color.yellow) else setBadge(connectionBadge, "KONTROL GEREKLİ", R.color.yellow)
-            else -> setBadge(connectionBadge, "KONTROL GEREKLİ", R.color.yellow)
+        val connectionLabel = when (providerPresentation.availability) {
+            UiDataAvailability.READY -> "BAĞLI"
+            UiDataAvailability.DELAYED -> "BAĞLI • GECİKMELİ"
+            UiDataAvailability.STALE -> "KONTROL GEREKLİ"
+            UiDataAvailability.UNAVAILABLE -> if (snapshot.state == ProviderState.PROVIDER_NOT_CONFIGURED) "EKSİK" else providerPresentation.badge
         }
+        setBadge(connectionBadge, connectionLabel, toneColor(providerPresentation.tone))
 
         val scanBadge = findViewById<TextView>(R.id.scanBadge)
         val freshestHeartbeat = maxOf(settings.autoScanLastHeartbeatAt, settings.autoScanServiceHeartbeatAt)
@@ -239,14 +234,12 @@ class SettingsActivity : BaseActivity() {
         }
 
         val workBadge = findViewById<TextView>(R.id.workModeBadge)
-        when {
-            snapshot.state == ProviderState.PROVIDER_READY && snapshot.message.contains("KAPANIŞ", ignoreCase = true) ->
-                setBadge(workBadge, "KAPANIŞ VERİSİ", R.color.yellow)
-            snapshot.state == ProviderState.PROVIDER_READY -> setBadge(workBadge, "CANLI VERİ", R.color.green)
-            snapshot.state == ProviderState.PROVIDER_STALE_READY && snapshot.message.contains("KAPANIŞ", true) -> setBadge(workBadge, "KAPANIŞ VERİSİ", R.color.yellow)
-            snapshot.state == ProviderState.PROVIDER_STALE_READY && snapshot.message.contains("GECİKMELİ", true) -> setBadge(workBadge, "GECİKMELİ ANALİZ", R.color.yellow)
-            settings.experimentalProvidersEnabled && settings.yahooFallbackEnabled -> setBadge(workBadge, "GECİKMELİ YEDEK", R.color.yellow)
-            else -> setBadge(workBadge, "YAPILANDIRILMAMIŞ", R.color.text_muted)
+        if (providerPresentation.availability != UiDataAvailability.UNAVAILABLE) {
+            setBadge(workBadge, providerPresentation.modeLabel, toneColor(providerPresentation.tone))
+        } else if (settings.experimentalProvidersEnabled && settings.yahooFallbackEnabled) {
+            setBadge(workBadge, "GECİKMELİ YEDEK", R.color.yellow)
+        } else {
+            setBadge(workBadge, providerPresentation.modeLabel, toneColor(providerPresentation.tone))
         }
     }
 

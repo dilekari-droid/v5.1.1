@@ -64,4 +64,34 @@ class UiTruthPolicyTest {
             UiTruthPolicy.userMessage("BIST_QUOTE_ERROR • Upstream quote is not live/current-session (age=901s)")
         )
     }
+
+
+    @Test
+    fun formatDataAge_hasCanonicalBoundaries() {
+        assertEquals("0 sn", UiTruthPolicy.formatDataAge(0L))
+        assertEquals("59 sn", UiTruthPolicy.formatDataAge(59_999L))
+        assertEquals("1 dk", UiTruthPolicy.formatDataAge(60_000L))
+        assertEquals("1 sa", UiTruthPolicy.formatDataAge(3_600_000L))
+        assertEquals("1 gün", UiTruthPolicy.formatDataAge(86_400_000L))
+        assertEquals("1 dk önce", UiTruthPolicy.formatDataAge(60_000L, relative = true))
+        assertEquals("bilinmiyor", UiTruthPolicy.formatDataAge(null))
+    }
+
+    @Test
+    fun providerStatus_neverPromotesStaleErrorToReady() {
+        val stale = tr.borsatakip.v5.data.ProviderReadinessSnapshot(
+            state = tr.borsatakip.v5.data.ProviderState.PROVIDER_STALE_READY,
+            failureCode = tr.borsatakip.v5.data.ProviderFailureCode.STALE_DATA,
+            message = "Provider READY doğrulamasının süresi doldu",
+        )
+        val presentation = UiTruthPolicy.providerStatus(stale)
+        assertEquals(UiDataAvailability.STALE, presentation.availability)
+        assertEquals(UiStatusTone.WARNING, presentation.tone)
+
+        val delayed = stale.copy(
+            failureCode = tr.borsatakip.v5.data.ProviderFailureCode.NONE,
+            message = "GECİKMELİ ANALİZ",
+        )
+        assertEquals(UiDataAvailability.DELAYED, UiTruthPolicy.providerStatus(delayed).availability)
+    }
 }

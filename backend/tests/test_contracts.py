@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import importlib
 import json
 import time
@@ -484,6 +486,35 @@ def test_session_token_http_auth_is_bound_to_installation_header(monkeypatch):
     assert wrong.status_code == 401
     assert missing.status_code == 401
 
+
+
+def test_session_token_expiry_is_fail_closed(monkeypatch):
+    monkeypatch.setattr(main, "SESSION_TOKEN_SECRET", "unit-test-session-secret")
+    monkeypatch.setattr(main, "SESSION_TOKEN_TTL_SECONDS", 1)
+    token, _ = main._issue_session_token("install-expiry")
+    body, signature = token.split(".", 1)
+    payload = json.loads(main._b64url_decode(body).decode("utf-8"))
+    payload["iat"] = int(time.time()) - 20
+    payload["exp"] = int(time.time()) - 10
+    expired_body = main._b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    expired_sig = hmac.new(main.SESSION_TOKEN_SECRET.encode("utf-8"), expired_body.encode("ascii"), hashlib.sha256).digest()
+    expired = f"{expired_body}.{main._b64url_encode(expired_sig)}"
+    assert main._verify_session_token(expired, expected_installation_id="install-expiry") is False
+
+
+def test_main_push_ci_is_exact_sha_not_path_filtered():
+    repo_root = Path(__file__).resolve().parents[2]
+    for rel in (
+        ".github/workflows/backend-ci.yml",
+        ".github/workflows/android-build.yml",
+        ".github/workflows/production-e2e.yml",
+    ):
+        workflow = (repo_root / rel).read_text()
+        push_block = workflow.split("pull_request:", 1)[0]
+        assert "branches: [main" in push_block or "branches: [main]" in push_block
+        assert "paths:" not in push_block
+    android = (repo_root / ".github/workflows/android-build.yml").read_text()
+    assert "assembleDebug" in android
 
 def test_viop_metadata_normalizes_expiry_without_fabricating_required_fields():
     now = int(time.time() * 1000)

@@ -1,6 +1,9 @@
 package tr.borsatakip.v5.ui
 
+import tr.borsatakip.v5.data.ProviderFailureCode
+import tr.borsatakip.v5.data.ProviderReadinessSnapshot
 import tr.borsatakip.v5.data.ProviderRouter
+import tr.borsatakip.v5.data.ProviderState
 import tr.borsatakip.v5.model.DataMode
 import tr.borsatakip.v5.model.MarketDataMetadata
 import tr.borsatakip.v5.model.MarketDataState
@@ -17,6 +20,16 @@ import tr.borsatakip.v5.model.ViopQuote
  * UNVERIFIED are represented with an em dash and an explanatory state instead of zero.
  */
 enum class UiDataAvailability { READY, DELAYED, STALE, UNAVAILABLE }
+
+enum class UiStatusTone { POSITIVE, WARNING, NEGATIVE, MUTED, INFO }
+
+data class ProviderUiStatus(
+    val availability: UiDataAvailability,
+    val badge: String,
+    val modeLabel: String,
+    val tone: UiStatusTone,
+    val message: String,
+)
 
 object UiTruthPolicy {
     private val displayableStates = setOf(MarketDataState.LIVE, MarketDataState.DELAYED, MarketDataState.FALLBACK)
@@ -100,6 +113,80 @@ object UiTruthPolicy {
                 "Teknik analiz için gerekli geçmiş piyasa verisi alınamadı."
             else -> fallback
         }
+    }
+
+    fun formatDataAge(ms: Long?, relative: Boolean = false): String {
+        if (ms == null) return "bilinmiyor"
+        if (ms < 0L) return "saat doğrulaması bekleniyor"
+        val value = when {
+            ms < 60_000L -> "${ms / 1000L} sn"
+            ms < 3_600_000L -> "${ms / 60_000L} dk"
+            ms < 86_400_000L -> "${ms / 3_600_000L} sa"
+            else -> "${ms / 86_400_000L} gün"
+        }
+        return if (relative) "$value önce" else value
+    }
+
+    fun providerStatus(snapshot: ProviderReadinessSnapshot): ProviderUiStatus {
+        val delayed = snapshot.message.contains("GECİKMELİ", ignoreCase = true)
+        val sessionClose = snapshot.message.contains("KAPANIŞ", ignoreCase = true)
+        return when (snapshot.state) {
+            ProviderState.PROVIDER_READY -> ProviderUiStatus(
+                UiDataAvailability.READY,
+                if (sessionClose) "KAPANIŞ HAZIR" else "HAZIR",
+                if (sessionClose) "KAPANIŞ ANALİZİ" else "CANLI VERİ",
+                if (sessionClose) UiStatusTone.WARNING else UiStatusTone.POSITIVE,
+                userMessage(snapshot.message, if (sessionClose) "Kapanış verisi doğrulandı." else "Veri sağlayıcı hazır."),
+            )
+            ProviderState.PROVIDER_STALE_READY -> ProviderUiStatus(
+                if (snapshot.failureCode == ProviderFailureCode.NONE && (delayed || sessionClose)) UiDataAvailability.DELAYED else UiDataAvailability.STALE,
+                when {
+                    delayed -> "GECİKMELİ ANALİZ"
+                    sessionClose -> "KAPANIŞ HAZIR"
+                    else -> "YENİDEN TEST"
+                },
+                when {
+                    delayed -> "GECİKMELİ ANALİZ"
+                    sessionClose -> "KAPANIŞ ANALİZİ"
+                    else -> "VERİ DOĞRULAMASI GEREKLİ"
+                },
+                UiStatusTone.WARNING,
+                userMessage(snapshot.message, "Veri sağlayıcı doğrulaması eski; yeniden test gerekli."),
+            )
+            ProviderState.PROVIDER_ERROR -> ProviderUiStatus(
+                UiDataAvailability.UNAVAILABLE, "HATA", "VERİ YOK", UiStatusTone.NEGATIVE,
+                userMessage(snapshot.message, "Veri sağlayıcı doğrulanamadı."),
+            )
+            ProviderState.PROVIDER_TESTING -> ProviderUiStatus(
+                UiDataAvailability.UNAVAILABLE, "TEST EDİLİYOR", "DOĞRULANIYOR", UiStatusTone.INFO,
+                "Veri sağlayıcı doğrulanıyor.",
+            )
+            ProviderState.PROVIDER_CONFIGURED -> ProviderUiStatus(
+                UiDataAvailability.UNAVAILABLE, "TEST GEREKLİ", "DOĞRULAMA GEREKLİ", UiStatusTone.WARNING,
+                "Veri sağlayıcı yapılandırıldı ancak henüz doğrulanmadı.",
+            )
+            ProviderState.PROVIDER_NOT_CONFIGURED -> ProviderUiStatus(
+                UiDataAvailability.UNAVAILABLE, "YAPILANDIRILMAMIŞ", "YAPILANDIRILMAMIŞ", UiStatusTone.MUTED,
+                "Veri sağlayıcı yapılandırılmamış.",
+            )
+        }
+    }
+
+    fun providerFailureTitle(code: ProviderFailureCode, timeframeLabel: String): String = when (code) {
+        ProviderFailureCode.BACKEND_URL_MISSING, ProviderFailureCode.API_KEY_MISSING, ProviderFailureCode.INVALID_HTTPS -> "VERİ SERVİSİ YAPILANDIRILMAMIŞ"
+        ProviderFailureCode.AUTH_ERROR -> "KİMLİK DOĞRULAMA HATASI"
+        ProviderFailureCode.RATE_LIMIT -> "İSTEK SINIRI"
+        ProviderFailureCode.NETWORK_TIMEOUT, ProviderFailureCode.NETWORK_ERROR, ProviderFailureCode.DNS_ERROR, ProviderFailureCode.TLS_ERROR, ProviderFailureCode.SERVER_ERROR -> "VERİ SERVİSİNE ULAŞILAMIYOR"
+        ProviderFailureCode.EMPTY_DATA, ProviderFailureCode.BIST_HISTORY_ERROR, ProviderFailureCode.STALE_DATA -> "$timeframeLabel VERİ SERVİSİ HAZIR DEĞİL"
+        else -> "VERİ ALINAMADI"
+    }
+
+    fun providerFailureMessage(code: ProviderFailureCode, timeframeLabel: String, detail: String?): String = when (code) {
+        ProviderFailureCode.BACKEND_URL_MISSING, ProviderFailureCode.API_KEY_MISSING, ProviderFailureCode.INVALID_HTTPS -> "$timeframeLabel taraması için Production Backend bağlantısı gerekli."
+        ProviderFailureCode.AUTH_ERROR -> "Production Backend kimlik doğrulaması başarısız. API anahtarını kontrol edin."
+        ProviderFailureCode.RATE_LIMIT -> "$timeframeLabel verisi için istek sınırı aşıldı. Tarama sahte sonuç üretmeden durduruldu."
+        ProviderFailureCode.EMPTY_DATA, ProviderFailureCode.BIST_HISTORY_ERROR, ProviderFailureCode.STALE_DATA -> "$timeframeLabel periyodu için güncel OHLCV verisi doğrulanamadı."
+        else -> userMessage(detail, "$timeframeLabel veri servisine şu anda ulaşılamıyor.")
     }
 
     fun valueOrDash(available: Boolean, value: Int): String = if (available) value.coerceAtLeast(0).toString() else "—"

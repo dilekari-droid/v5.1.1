@@ -447,12 +447,11 @@ class SettingsDetailActivity : BaseActivity() {
     private fun renderWorkMode() {
         setHeader("Çalışma Modu", "Yalnız kaynakta gerçekten bulunan çalışma yolu gösterilir")
         val snapshot = readiness.localConfigState()
+        val providerPresentation = UiTruthPolicy.providerStatus(snapshot)
         val mode = when {
-            snapshot.state == ProviderState.PROVIDER_READY -> "CANLI VERİ"
-            snapshot.state == ProviderState.PROVIDER_STALE_READY && snapshot.message.contains("GECİKMELİ", true) -> "GECİKMELİ ANALİZ"
-            snapshot.state == ProviderState.PROVIDER_STALE_READY && snapshot.message.contains("KAPANIŞ", true) -> "KAPANIŞ ANALİZİ"
+            providerPresentation.availability != UiDataAvailability.UNAVAILABLE -> providerPresentation.modeLabel
             settingsStore.experimentalProvidersEnabled && settingsStore.yahooFallbackEnabled -> "GECİKMELİ YEDEK ANALİZ"
-            else -> "YAPILANDIRILMAMIŞ"
+            else -> providerPresentation.modeLabel
         }
         addStatus(
             "Geçerli çalışma modu: $mode\n" +

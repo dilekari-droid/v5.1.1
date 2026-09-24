@@ -241,7 +241,7 @@ class ViopDetailActivity : BaseActivity() {
         findViewById<TextView>(R.id.viopVolume).text = "Hacim ${if (displayable) q?.volume?.let(::formatCompact) ?: "—" else "—"}"
         findViewById<TextView>(R.id.viopOpenInterest).text = "Açık Poz. ${if (displayable) q?.openInterest?.let(::formatLong) ?: "—" else "—"}"
         findViewById<TextView>(R.id.viopDataAge).text = q?.exchangeTimestamp?.takeIf { it > 0L }?.let {
-            "Veri ${formatAge(System.currentTimeMillis() - it)}"
+            "Veri ${UiTruthPolicy.formatDataAge(System.currentTimeMillis() - it, relative = true)}"
         } ?: "Veri zamanı —"
     }
 
@@ -441,12 +441,6 @@ class ViopDetailActivity : BaseActivity() {
 
     private fun formatLong(value: Long): String = String.format(Locale.US, "%,d", value).replace(',', '.')
 
-    private fun formatAge(ageMs: Long): String = when {
-        ageMs < 0L -> "saat doğrulaması bekleniyor"
-        ageMs < 60_000L -> "${ageMs / 1000L} sn önce"
-        ageMs < 3_600_000L -> "${ageMs / 60_000L} dk önce"
-        else -> "${ageMs / 3_600_000L} sa önce"
-    }
 
     private fun formatTimestamp(timestamp: Long): String = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("tr", "TR")).format(Date(timestamp))
 }

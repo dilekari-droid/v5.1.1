@@ -143,7 +143,7 @@ class OpportunityAdapter(
             if (x.scanCadenceMinutes > 0) append(" • Cadence ${x.scanCadenceMinutes} DK")
             append(" • Trend ${trendStyle.arrow} ${trendStyle.label}")
             append("\nEnsemble: ${x.ensembleStatus}\n${x.strategyWeightsLabel}")
-            x.dataAgeMs?.let { append(" • Yaş ${it / 1000}s") }
+            x.dataAgeMs?.let { append(" • Yaş ${UiTruthPolicy.formatDataAge(it)}") }
             x.riskPlan?.let { plan -> append(" • RR2 ").append(plan.rr2?.let { "1:%.2f".format(it) } ?: "—") }
         }
 

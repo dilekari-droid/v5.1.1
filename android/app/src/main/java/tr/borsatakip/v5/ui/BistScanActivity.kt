@@ -568,22 +568,11 @@ class BistScanActivity : BaseActivity() {
         }
     }
 
-    private fun providerStatusLabel(code: ProviderFailureCode, timeframe: ScanTimeframe): String = when (code) {
-        ProviderFailureCode.BACKEND_URL_MISSING, ProviderFailureCode.API_KEY_MISSING, ProviderFailureCode.INVALID_HTTPS -> "VERİ SERVİSİ YAPILANDIRILMAMIŞ"
-        ProviderFailureCode.AUTH_ERROR -> "KİMLİK DOĞRULAMA HATASI"
-        ProviderFailureCode.RATE_LIMIT -> "İSTEK SINIRI"
-        ProviderFailureCode.NETWORK_TIMEOUT, ProviderFailureCode.NETWORK_ERROR, ProviderFailureCode.DNS_ERROR, ProviderFailureCode.TLS_ERROR, ProviderFailureCode.SERVER_ERROR -> "VERİ SERVİSİNE ULAŞILAMIYOR"
-        ProviderFailureCode.EMPTY_DATA, ProviderFailureCode.BIST_HISTORY_ERROR, ProviderFailureCode.STALE_DATA -> "${timeframe.label} VERİ SERVİSİ HAZIR DEĞİL"
-        else -> "VERİ ALINAMADI"
-    }
+    private fun providerStatusLabel(code: ProviderFailureCode, timeframe: ScanTimeframe): String =
+        UiTruthPolicy.providerFailureTitle(code, timeframe.label)
 
-    private fun providerUserMessage(code: ProviderFailureCode, timeframe: ScanTimeframe, detail: String?): String = when (code) {
-        ProviderFailureCode.BACKEND_URL_MISSING, ProviderFailureCode.API_KEY_MISSING, ProviderFailureCode.INVALID_HTTPS -> "${timeframe.label} taraması için Production Backend bağlantısı gerekli."
-        ProviderFailureCode.AUTH_ERROR -> "Production Backend kimlik doğrulaması başarısız. API anahtarını kontrol edin."
-        ProviderFailureCode.RATE_LIMIT -> "${timeframe.label} verisi için istek sınırı aşıldı. Tarama sahte sonuç üretmeden durduruldu."
-        ProviderFailureCode.EMPTY_DATA, ProviderFailureCode.BIST_HISTORY_ERROR, ProviderFailureCode.STALE_DATA -> "${timeframe.label} periyodu için güncel OHLCV verisi doğrulanamadı."
-        else -> UiTruthPolicy.userMessage(detail, "${timeframe.label} veri servisine şu anda ulaşılamıyor.")
-    }
+    private fun providerUserMessage(code: ProviderFailureCode, timeframe: ScanTimeframe, detail: String?): String =
+        UiTruthPolicy.providerFailureMessage(code, timeframe.label, detail)
 
     private fun refreshSourceLabel() {
         source.text = when {

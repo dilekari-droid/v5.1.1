@@ -578,10 +578,10 @@ class StockDetailActivity : BaseActivity() {
         val measured = if (x.receivedElapsedRealtime > 0L) {
             val elapsed=(SystemClock.elapsedRealtime()-x.receivedElapsedRealtime).coerceAtLeast(0L)
             val atReceipt=if(x.receivedAt>0&&x.exchangeTimestamp>0)(x.receivedAt-x.exchangeTimestamp).coerceAtLeast(0L) else 0L
-            formatAge(atReceipt+elapsed)
+            UiTruthPolicy.formatDataAge(atReceipt + elapsed)
         } else "yeniden başlatma sonrası monotonic yaş doğrulanamıyor"
         val decisionLabel = if (isDelayedObservation()) "Karar Durumu: TEKNİK İZLEME • AL/SAT YOK" else "Karar Durumu: ${x.decisionState.name}"
-        return "$decisionLabel\nSıralama Skoru: ${x.rankingScore}/100\nKaynak: ${x.source}\nVeri Modu: ${x.dataMode.name}\nPiyasa Veri Zamanı: ${time(x.exchangeTimestamp)}\nUygulamaya Ulaşma: ${time(x.receivedAt)}\nTarama Anındaki Veri Yaşı: ${x.dataAgeMs?.let(::formatAge) ?: "bilinmiyor"}\nŞu An Ölçülen Veri Yaşı: $measured\nSağlayıcı gecikmesi: ${x.delaySeconds?.let { "$it sn" } ?: "bilinmiyor"}\nTarama başladı: ${time(x.scanStartedAt)}\nTarama tamamlandı: ${time(x.scanCompletedAt)}\nScanRun: ${x.scanRunId ?: "yok"}\nNot: Uygulamaya ulaşma süresi, tek başına piyasa gecikmesi olarak yorumlanmaz."
+        return "$decisionLabel\nSıralama Skoru: ${x.rankingScore}/100\nKaynak: ${x.source}\nVeri Modu: ${x.dataMode.name}\nPiyasa Veri Zamanı: ${time(x.exchangeTimestamp)}\nUygulamaya Ulaşma: ${time(x.receivedAt)}\nTarama Anındaki Veri Yaşı: ${UiTruthPolicy.formatDataAge(x.dataAgeMs)}\nŞu An Ölçülen Veri Yaşı: $measured\nSağlayıcı gecikmesi: ${x.delaySeconds?.let { "$it sn" } ?: "bilinmiyor"}\nTarama başladı: ${time(x.scanStartedAt)}\nTarama tamamlandı: ${time(x.scanCompletedAt)}\nScanRun: ${x.scanRunId ?: "yok"}\nNot: Uygulamaya ulaşma süresi, tek başına piyasa gecikmesi olarak yorumlanmaz."
     }
 
     private fun isDelayedObservation(): Boolean = x.dataMode != DataMode.REALTIME || !x.isRealtime
@@ -596,5 +596,4 @@ class StockDetailActivity : BaseActivity() {
     private fun time(v:Long)=if(v>0)df.format(Date(v)) else "bilinmiyor"
     private fun money(v:Double)=if(v.isFinite())"%.2f TL".format(v) else "Veri yok"
     private fun fmt(v:Double?)=v?.takeIf{it.isFinite()}?.let{"%.2f".format(it)}?:"Veri yok"
-    private fun formatAge(ms:Long)=when { ms<60_000L->"${ms/1000L} sn"; ms<3_600_000L->"${ms/60_000L} dk"; else->"${ms/3_600_000L} sa" }
 }

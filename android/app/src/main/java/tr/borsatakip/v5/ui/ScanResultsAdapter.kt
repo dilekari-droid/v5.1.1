@@ -233,19 +233,13 @@ class ScanResultsAdapter(
         val ageAtReceipt = if (item.exchangeTimestamp > 0L && item.receivedAt > 0L) {
             (item.receivedAt - item.exchangeTimestamp).coerceAtLeast(0L)
         } else 0L
-        return formatAge(ageAtReceipt + elapsedSinceReceipt)
+        return UiTruthPolicy.formatDataAge(ageAtReceipt + elapsedSinceReceipt)
     }
 
     private fun formatTimestamp(value: Long): String = if (value > 0L) {
         SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(value))
     } else "bilinmiyor"
 
-    private fun formatAge(ms: Long): String = when {
-        ms < 60_000L -> "${ms / 1000L} sn"
-        ms < 3_600_000L -> "${ms / 60_000L} dk"
-        ms < 86_400_000L -> "${ms / 3_600_000L} sa"
-        else -> "${ms / 86_400_000L} gün"
-    }
 
     private fun priceOrMissing(value: Double?): String = value?.takeIf { it.isFinite() }?.let { "%.2f".format(it) } ?: "veri yok"
     private fun mark(ok: Boolean): String = if (ok) "✓" else "—"
