@@ -1,0 +1,125 @@
+name: V5.1.1 Exact Source Package
+
+on:
+  push:
+    branches: [artifact/v511-f362-source-package]
+    paths: ['.github/workflows/v511-f362-source-package.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact final source commit
+        uses: actions/checkout@v4
+        with:
+          ref: f362a797f4c99e45ffd17a16fa25da0cc868eeab
+          fetch-depth: 1
+      - name: Source identity and hygiene gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f362a797f4c99e45ffd17a16fa25da0cc868eeab"
+          if grep -R -n -E 'dilekari-droid/v6-1-1|V6\.1\.1|v611' android backend contracts .github README.md; then
+            echo 'V6 contamination detected' >&2
+            exit 1
+          fi
+          if grep -R -n -E 'V?5\.4\.1[0-5]' android backend contracts .github README.md --exclude-dir=build; then
+            echo 'obsolete pre-final version string detected' >&2
+            exit 1
+          fi
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          roots=[Path('android'),Path('backend'),Path('contracts'),Path('.github'),Path('README.md')]
+          patterns=(
+              re.compile(r'btk_[A-Za-z0-9]{20,}'),
+              re.compile(r"SESSION_TOKEN_SECRET\s*=\s*['\"][^'\"]+['\"]"),
+              re.compile(r"TRADEWIZE_(?:API_KEY|ACCESS_TOKEN)\s*=\s*['\"][^'\"]+['\"]"),
+          )
+          hits=[]
+          files=[]
+          for root in roots:
+              if root.is_file(): files.append(root)
+              elif root.exists(): files.extend(p for p in root.rglob('*') if p.is_file())
+          for path in files:
+              if any(part in {'.git','build','__pycache__','.pytest_cache','.gradle'} for part in path.parts):
+                  continue
+              try: text=path.read_text(encoding='utf-8')
+              except (UnicodeDecodeError,OSError): continue
+              for lineno,line in enumerate(text.splitlines(),1):
+                  if any(p.search(line) for p in patterns): hits.append(f'{path}:{lineno}')
+          if hits: raise SystemExit('hardcoded secret pattern found at: '+', '.join(hits))
+          print('source identity/hygiene PASS')
+          PY
+      - name: Build source-only ZIP and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os, zipfile
+          commit='f362a797f4c99e45ffd17a16fa25da0cc868eeab'
+          tree='cd80c34d89ae49a370f08cbc84229e8630c0f397'
+          stem='V5.1.1-KAYNAK-KOD-FINAL-f362a797f4c9'
+          zip_path=Path(stem+'.zip')
+          skip_dirs={'.git','build','__pycache__','.pytest_cache','.gradle','.idea'}
+          roots=[Path('.github'),Path('android'),Path('backend'),Path('contracts')]
+          extra=[Path('README.md'),Path('.gitignore')]
+          selected=[]
+          for root in roots:
+              if not root.exists(): continue
+              for p in root.rglob('*'):
+                  if not p.is_file(): continue
+                  if any(part in skip_dirs for part in p.parts): continue
+                  selected.append(p)
+          selected.extend(p for p in extra if p.exists())
+          selected=sorted(set(selected), key=lambda p:p.as_posix())
+          with zipfile.ZipFile(zip_path,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=9) as zf:
+              for p in selected:
+                  zf.write(p,p.as_posix())
+          with zipfile.ZipFile(zip_path) as zf:
+              bad=zf.testzip()
+              if bad: raise SystemExit('ZIP CRC failure: '+bad)
+          sha=hashlib.sha256(zip_path.read_bytes()).hexdigest()
+          prov={
+            'schemaVersion':1,
+            'artifactType':'source-only-final-pre-release',
+            'artifactName':zip_path.name,
+            'sourceCommit':commit,
+            'sourceTree':tree,
+            'versionName':'5.4.16',
+            'versionCode':556,
+            'zipCrc':'PASS',
+            'sha256':sha,
+            'releaseReady':False,
+            'exactShaRuns':{
+              'backend':36043570624,
+              'android':36043570515,
+              'productionE2E':36043570490,
+            },
+            'remainingExternalGates':[
+              'BORSA_E2E_BASE_URL and exact-source production deployment',
+              'real provider production E2E and open-session BIST freshness',
+              'physical-device and OEM acceptance',
+              'provider request-weight / realtime / VIOP metadata verification as applicable',
+              'version distribution-history decision',
+              'release signing and final APK validation',
+            ]
+          }
+          Path(stem+'-PROVENANCE.json').write_text(json.dumps(prov,indent=2,ensure_ascii=False)+'\n',encoding='utf-8')
+          Path(zip_path.name+'.sha256').write_text(f'{sha}  {zip_path.name}\n',encoding='utf-8')
+          print(zip_path.name,sha,len(selected))
+          PY
+      - name: Upload exact source artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: V5.1.1-KAYNAK-KOD-FINAL-f362a797f4c9
+          path: |
+            V5.1.1-KAYNAK-KOD-FINAL-f362a797f4c9.zip
+            V5.1.1-KAYNAK-KOD-FINAL-f362a797f4c9-PROVENANCE.json
+            V5.1.1-KAYNAK-KOD-FINAL-f362a797f4c9.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
