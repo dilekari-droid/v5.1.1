@@ -31,8 +31,8 @@ jobs:
         run: |
           set -euo pipefail
           base64 -d .github/tmp/v511-close-open.patch.gz.b64 | gzip -d > /tmp/v511-close-open.patch
-          patch -p3 --dry-run < /tmp/v511-close-open.patch
-          patch -p3 < /tmp/v511-close-open.patch
+          git apply --check /tmp/v511-close-open.patch
+          git apply /tmp/v511-close-open.patch
           git diff --check
       - name: Source hygiene and V5 isolation gates
         shell: bash
