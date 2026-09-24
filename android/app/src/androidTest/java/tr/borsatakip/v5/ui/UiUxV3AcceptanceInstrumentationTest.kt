@@ -15,8 +15,12 @@ import org.junit.runner.RunWith
 import tr.borsatakip.v5.R
 import tr.borsatakip.v5.data.SettingsStore
 import tr.borsatakip.v5.model.Candle
+import tr.borsatakip.v5.model.DataMode
 import tr.borsatakip.v5.model.DecisionState
+import tr.borsatakip.v5.model.MarketDataMetadata
+import tr.borsatakip.v5.model.MarketDataState
 import tr.borsatakip.v5.model.Opportunity
+import tr.borsatakip.v5.model.SignalValidity
 import tr.borsatakip.v5.model.TechnicalSnapshot
 
 @RunWith(AndroidJUnit4::class)
@@ -50,10 +54,27 @@ class UiUxV3AcceptanceInstrumentationTest {
             support = null,
             resistance = null,
             source = "instrumentation",
-            dataTimestamp = 1L,
-            candles = listOf(Candle(1L, price, price, price, price, 1_000.0 + index)),
+            dataTimestamp = System.currentTimeMillis(),
+            candles = listOf(Candle(System.currentTimeMillis(), price, price, price, price, 1_000.0 + index)),
             technical = TechnicalSnapshot(null, null, null, null, null, null, null, null, null, null, null, null, null),
             decisionState = DecisionState.VERIFIED_OPPORTUNITY,
+            dataMode = DataMode.REALTIME,
+            isRealtime = true,
+            currentSessionIncluded = true,
+            exchangeTimestamp = System.currentTimeMillis(),
+            receivedAt = System.currentTimeMillis(),
+            signalValidity = SignalValidity.VALID,
+            marketDataMetadata = MarketDataMetadata(
+                providerId = "instrumentation",
+                source = "instrumentation",
+                marketDataTimestamp = System.currentTimeMillis(),
+                deviceReceivedAt = System.currentTimeMillis(),
+                isLive = true,
+                isDelayed = false,
+                delayDurationMs = 0L,
+                lastSuccessfulUpdateAt = System.currentTimeMillis(),
+                state = MarketDataState.LIVE
+            ),
             longScore = if (long) 80 else 0,
             shortScore = if (long) 0 else 80
         )
@@ -179,6 +200,35 @@ class UiUxV3AcceptanceInstrumentationTest {
                         assertTouchTargetAtLeast48Dp(view)
                     }
                 }
+            }
+        }
+    }
+
+    @Test
+    fun viop_unavailable_state_uses_dash_instead_of_fake_zero() {
+        prepareOfflineSafeSettings()
+        ActivityScenario.launch(ViopActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                listOf(R.id.summaryLong, R.id.summaryShort, R.id.summaryWatch, R.id.summaryTotal).forEach { id ->
+                    val text = activity.findViewById<android.widget.TextView>(id).text.toString()
+                    assertTrue("unavailable VİOP counter must use dash: $text", text.contains("—"))
+                    assertTrue("unavailable VİOP counter must not fake zero: $text", !text.endsWith("\n0"))
+                }
+                assertInsideScreen(activity.findViewById(R.id.providerTitle))
+                assertInsideScreen(activity.findViewById(R.id.refresh))
+            }
+        }
+    }
+
+    @Test
+    fun stocks_unverified_rows_do_not_render_as_market_data() {
+        prepareOfflineSafeSettings()
+        val unverified = opportunity(7).copy(dataMode = DataMode.UNVERIFIED, marketDataMetadata = null)
+        AppSession.lastOpportunities = listOf(unverified)
+        ActivityScenario.launch(StocksActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val list = activity.findViewById<RecyclerView>(R.id.stocksList)
+                assertEquals("unverified rows must be hidden", 0, list.adapter?.itemCount ?: 0)
             }
         }
     }

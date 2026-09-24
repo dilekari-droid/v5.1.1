@@ -145,7 +145,7 @@ class SettingsActivity : BaseActivity() {
                 refreshDashboard()
                 Toast.makeText(
                     this@SettingsActivity,
-                    if (result.state == ProviderState.PROVIDER_READY || (result.state == ProviderState.PROVIDER_STALE_READY && result.failureCode == ProviderFailureCode.NONE)) "Provider bağlantısı doğrulandı: ${result.message}" else "Veri yenilenemedi: ${result.failureCode} • ${result.message}",
+                    if (result.state == ProviderState.PROVIDER_READY || (result.state == ProviderState.PROVIDER_STALE_READY && result.failureCode == ProviderFailureCode.NONE)) "Veri sağlayıcı bağlantısı doğrulandı." else UiTruthPolicy.userMessage(result.message, "Veri yenilenemedi. Bağlantı ayarlarını kontrol edin."),
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -282,7 +282,7 @@ class SettingsActivity : BaseActivity() {
                 if (returnToViop) finish()
             } else {
                 val prefix = if (returnToViop) "VİOP bağlantısı doğrulanamadı" else "BIST bağlantısı doğrulanamadı"
-                Toast.makeText(this@SettingsActivity, "$prefix: ${result.failureCode} • ${result.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@SettingsActivity, UiTruthPolicy.userMessage(result.message, prefix), Toast.LENGTH_LONG).show()
             }
         }
     }

@@ -147,7 +147,7 @@ class ViopActivity : BaseActivity() {
         val pct = if (price != null && previous != null && price.isFinite() && previous.isFinite() && previous > 0.0) {
             ((price / previous) - 1.0) * 100.0
         } else null
-        if (stock == null || price == null || !price.isFinite() || price <= 0.0) {
+        if (!UiTruthPolicy.canShowStock(stock) || price == null || !price.isFinite() || price <= 0.0) {
             value.text = "—"
             change.text = "Veri yok"
             change.setTextColor(getColor(R.color.text_secondary))
@@ -155,7 +155,8 @@ class ViopActivity : BaseActivity() {
             return
         }
         value.text = if (price >= 1000.0) "%,.2f".format(Locale.getDefault(), price) else "%.2f".format(Locale.getDefault(), price)
-        val quality = MarketDataQuality.uiStatus(stock.marketDataMetadata)
+        val displayStock = stock ?: return
+        val quality = MarketDataQuality.uiStatus(displayStock.marketDataMetadata)
         change.text = listOfNotNull(pct?.let { "%+.2f%%".format(Locale.getDefault(), it) }, quality.takeIf { it.isNotBlank() }).joinToString(" • ")
         change.setTextColor(when {
             pct == null -> getColor(R.color.text_secondary)
@@ -163,7 +164,7 @@ class ViopActivity : BaseActivity() {
             pct < 0.0 -> getColor(R.color.red)
             else -> getColor(R.color.text_secondary)
         })
-        chart.setCandles(stock.candles, pct)
+        chart.setCandles(displayStock.candles, pct)
     }
 
     private fun openViopSettings() {
@@ -185,7 +186,7 @@ class ViopActivity : BaseActivity() {
                     providerAutoTestInFlight = false
                     refreshProviderState()
                     if (result.state == ProviderState.PROVIDER_READY) loadDashboardPreview()
-                    else status.text = "${result.failureCode} • ${result.message}"
+                    else status.text = UiTruthPolicy.userMessage(result.message, "VİOP veri servisi doğrulanamadı.")
                 }
             }
             ProviderState.PROVIDER_NOT_CONFIGURED -> {
@@ -222,7 +223,7 @@ class ViopActivity : BaseActivity() {
             } else {
                 clearPreview()
                 showUnavailableSummary("VİOP provider doğrulanamadı")
-                status.text = "VİOP provider doğrulanamadı • ${r.failureCode} • ${r.message}"
+                status.text = UiTruthPolicy.userMessage(r.message, "VİOP veri servisi doğrulanamadı. Gerçek VİOP sinyali üretilemez.")
             }
         }
     }
@@ -249,7 +250,7 @@ class ViopActivity : BaseActivity() {
                 ProviderState.PROVIDER_NOT_CONFIGURED -> "Production backend yapılandırılmamış • DAYANAK ÖN TARAMA kullanılabilir"
                 ProviderState.PROVIDER_TESTING -> "Bağlantı doğrulanıyor…"
                 ProviderState.PROVIDER_STALE_READY -> "Veri yeniden doğrulanmalı • kesin VİOP sinyali yayımlanmaz"
-                else -> "${s.failureCode} • ${s.message}"
+                else -> UiTruthPolicy.userMessage(s.message, "VİOP veri servisi doğrulanamadı • gerçek VİOP sinyali üretilemez")
             }
         }
 
@@ -267,9 +268,9 @@ class ViopActivity : BaseActivity() {
 
         scanButton.text = when {
             showingUnderlying -> if (underlyingScanCompleted) "DAYANAK TARAMASINI YENİLE" else "DAYANAK ÖN TARAMAYI BAŞLAT"
-            s.state == ProviderState.PROVIDER_READY -> "VİOP TARAMASINI YENİLE"
+            live -> "VİOP TARAMASINI YENİLE"
             s.state == ProviderState.PROVIDER_TESTING -> "PROVIDER TEST EDİLİYOR"
-            s.state == ProviderState.PROVIDER_CONFIGURED || s.state == ProviderState.PROVIDER_STALE_READY -> "BAĞLANTIYI DOĞRULA"
+            s.state == ProviderState.PROVIDER_READY || s.state == ProviderState.PROVIDER_CONFIGURED || s.state == ProviderState.PROVIDER_STALE_READY -> "BAĞLANTIYI DOĞRULA"
             else -> "DAYANAK ÖN TARAMAYI BAŞLAT"
         }
         scanButton.isEnabled = s.state != ProviderState.PROVIDER_TESTING
@@ -284,6 +285,7 @@ class ViopActivity : BaseActivity() {
                     val c = ViopContractSelector.candidates(contracts, allowWatch = false).firstOrNull()
                         ?: error("NO_CONTRACT: Doğrulanmış aktif VİOP sözleşmesi bulunamadı.")
                     val q = backend.loadViopQuote(c.symbol).getOrThrow()
+                    require(UiTruthPolicy.canShowViopQuote(q)) { "STALE_DATA: VİOP quote güncel/doğrulanmış değil." }
                     val h = backend.loadViopHistory(c.symbol).getOrThrow()
                     require(h.isNotEmpty()) { "HISTORY_ERROR: VİOP history boş." }
                     Triple(c, q, h)
@@ -370,7 +372,7 @@ class ViopActivity : BaseActivity() {
 
     private fun runOpportunityScan() {
         if (readiness.localConfigState().state != ProviderState.PROVIDER_READY) {
-            status.text = "Gerçek VİOP taraması engellendi • provider READY değil."
+            status.text = "Gerçek VİOP taraması için doğrulanmış VİOP veri servisi gerekir."
             return
         }
         scanJob?.cancel()
@@ -421,7 +423,7 @@ class ViopActivity : BaseActivity() {
                 "VİOP veri sağlayıcısı henüz yapılandırılmadı • BIST özellikleri çalışmaya devam eder • sahte VİOP verisi üretilmez"
             msg.contains("HTTP 401") || msg.contains("AUTH", ignoreCase = true) ->
                 "VİOP kimlik doğrulaması başarısız • Ayarlar > API Anahtarları bölümünü kontrol edin"
-            else -> "VİOP verisi kullanılamıyor • ${raw ?: "Bilinmeyen veri hatası"}"
+            else -> UiTruthPolicy.userMessage(raw, "VİOP verisi kullanılamıyor. Güncel veri doğrulanamadığı için gerçek VİOP sinyali üretilemez.")
         }
     }
 
@@ -451,7 +453,7 @@ class ViopActivity : BaseActivity() {
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
-                if (scanGuard.accepts(generation)) status.text = "Dayanak taraması başarısız • ${t.message ?: "Beklenmeyen hata"}"
+                if (scanGuard.accepts(generation)) status.text = UiTruthPolicy.userMessage(t.message, "Dayanak taraması tamamlanamadı.")
             } finally {
                 if (scanGuard.accepts(generation)) {
                     underlyingScanInFlight = false
@@ -471,7 +473,7 @@ class ViopActivity : BaseActivity() {
         if (local.state != ProviderState.PROVIDER_READY) {
             openUnderlyingFallback(candidate, when (local.state) {
                 ProviderState.PROVIDER_NOT_CONFIGURED -> "VİOP veri servisi yapılandırılmamış • dayanak detayı açıldı."
-                else -> "VİOP veri servisi hazır değil • ${local.failureCode} • dayanak detayı açıldı."
+                else -> "VİOP veri servisi hazır değil • dayanak detayı açıldı."
             })
             return
         }

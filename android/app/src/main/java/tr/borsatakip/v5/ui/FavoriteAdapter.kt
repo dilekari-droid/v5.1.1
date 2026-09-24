@@ -51,10 +51,12 @@ class FavoriteAdapter(
         holder.company.text = stock?.companyName ?: opportunity?.companyName ?: fav.displayName
             ?: "Şirket adı veri sağlayıcıdan alınamadı"
 
-        val currentPrice = stock?.quotePrice?.takeIf { it.isFinite() && it > 0.0 }
-            ?: stock?.candles?.lastOrNull()?.close?.takeIf { it.isFinite() && it > 0.0 }
-        val currentChange = stockChange(stock)
-        val sourceLabel = stock?.let { sourceState(it) } ?: "Veri yenilenemedi"
+        val stockAvailable = UiTruthPolicy.canShowStock(stock)
+        val opportunityAvailable = opportunity?.let(UiTruthPolicy::canShowOpportunity) == true
+        val currentPrice = if (stockAvailable) stock?.quotePrice?.takeIf { it.isFinite() && it > 0.0 }
+            ?: stock?.candles?.lastOrNull()?.close?.takeIf { it.isFinite() && it > 0.0 } else null
+        val currentChange = if (stockAvailable) stockChange(stock) else null
+        val sourceLabel = if (stockAvailable && stock != null) sourceState(stock) else "Veri doğrulanamadı"
 
         holder.details.text = buildString {
             if (currentPrice != null) {

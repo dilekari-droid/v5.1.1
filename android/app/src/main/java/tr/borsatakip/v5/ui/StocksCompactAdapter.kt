@@ -43,10 +43,12 @@ class StocksCompactAdapter(
         val item = items[position]
         val symbol = FavoriteRepository.normalizeSymbol(item.symbol)
         val isFavorite = favoriteSymbols.contains(symbol)
+        val available = UiTruthPolicy.canShowOpportunity(item)
         val effectiveDirection = OpportunityDirectionalFilterPolicy.effectiveDirection(item)
         val direction = effectiveDirection.name
         val changePct = item.dailyChangePct?.takeIf(Double::isFinite)
         val accent = when {
+            !available -> holder.itemView.context.getColor(R.color.stroke)
             direction == "LONG" -> holder.itemView.context.getColor(R.color.green)
             direction == "SHORT" -> holder.itemView.context.getColor(R.color.red)
             (changePct ?: 0.0) > 0.0 -> holder.itemView.context.getColor(R.color.green)
@@ -63,27 +65,43 @@ class StocksCompactAdapter(
         holder.company.text = item.companyName?.trim().takeUnless { it.isNullOrBlank() } ?: "Şirket adı yok"
         val verified = item.signalValidity == tr.borsatakip.v5.model.SignalValidity.VALID &&
             item.direction.equals(direction, ignoreCase = true)
-        holder.direction.text = when (effectiveDirection) {
+        val baseDirection = when (effectiveDirection) {
             OpportunityDirectionalFilterPolicy.Direction.LONG -> if (verified) "LONG" else "LONG EĞİLİMİ"
             OpportunityDirectionalFilterPolicy.Direction.SHORT -> if (verified) "SHORT" else "SHORT EĞİLİMİ"
             OpportunityDirectionalFilterPolicy.Direction.NEUTRAL -> "NÖTR"
         }
-        holder.direction.setTextColor(accent)
+        val strength = OpportunityUiPolicy.strength(item)
+        holder.direction.text = when {
+            !available -> "VERİ YOK"
+            strength != null && effectiveDirection != OpportunityDirectionalFilterPolicy.Direction.NEUTRAL -> "$baseDirection • Güç %$strength"
+            else -> baseDirection
+        }
+        holder.direction.setTextColor(if (available) accent else holder.itemView.context.getColor(R.color.text_secondary))
 
-        holder.chart.setCandles(item.candles, changePct)
-        holder.price.text = item.price.takeIf { it.isFinite() && it > 0.0 }?.let(::formatPrice) ?: "—"
-        holder.change.text = changePct?.let { "%+.2f%%".format(Locale.getDefault(), it) } ?: "—"
-        holder.change.setTextColor(
-            when {
-                changePct == null -> holder.itemView.context.getColor(R.color.text_secondary)
-                changePct > 0.0 -> holder.itemView.context.getColor(R.color.green)
-                changePct < 0.0 -> holder.itemView.context.getColor(R.color.red)
-                else -> holder.itemView.context.getColor(R.color.text_secondary)
-            }
-        )
-        holder.volume.text = item.technical.volumeRatio?.takeIf(Double::isFinite)?.let {
-            "Hacim ${"%.1fx".format(Locale.getDefault(), it)}"
-        } ?: "Hacim —"
+        if (available) {
+            holder.chart.visibility = View.VISIBLE
+            holder.chart.setCandles(item.candles, changePct)
+            holder.price.text = formatPrice(item.price)
+            holder.change.text = changePct?.let { "%+.2f%%".format(Locale.getDefault(), it) } ?: "—"
+            holder.change.setTextColor(
+                when {
+                    changePct == null -> holder.itemView.context.getColor(R.color.text_secondary)
+                    changePct > 0.0 -> holder.itemView.context.getColor(R.color.green)
+                    changePct < 0.0 -> holder.itemView.context.getColor(R.color.red)
+                    else -> holder.itemView.context.getColor(R.color.text_secondary)
+                }
+            )
+            holder.volume.text = item.technical.volumeRatio?.takeIf(Double::isFinite)?.let {
+                "Hacim ${"%.1fx".format(Locale.getDefault(), it)}"
+            } ?: "Hacim —"
+        } else {
+            holder.chart.visibility = View.INVISIBLE
+            holder.chart.setCandles(emptyList(), null)
+            holder.price.text = "—"
+            holder.change.text = "Veri yok"
+            holder.change.setTextColor(holder.itemView.context.getColor(R.color.text_secondary))
+            holder.volume.text = "Hacim —"
+        }
         holder.more.text = "⋮"
         holder.more.contentDescription = "Hisse detayını aç"
 
@@ -93,7 +111,7 @@ class StocksCompactAdapter(
             setColor(Color.rgb(5, 28, 45))
             setStroke(
                 (1f * holder.itemView.resources.displayMetrics.density).toInt().coerceAtLeast(1),
-                ColorUtils.setAlphaComponent(accent, 150)
+                ColorUtils.setAlphaComponent(accent, if (available) 150 else 90)
             )
         }
         val tap = View.OnClickListener { click(item) }

@@ -226,7 +226,8 @@ class ScanResultsActivity : BaseActivity() {
         }
         list.visibility = View.VISIBLE
 
-        val source = if (summaryMode == SummaryMode.SUCCESS) scanState.results.ifEmpty { AppSession.lastOpportunities } else AppSession.lastOpportunities
+        val rawSource = if (summaryMode == SummaryMode.SUCCESS) scanState.results.ifEmpty { AppSession.lastOpportunities } else AppSession.lastOpportunities
+        val source = rawSource.filter(UiTruthPolicy::canShowOpportunity)
         val delayed = scanState.scanMode.observationOnly
         val filtered: List<Opportunity> = when (mode) {
             Mode.LONG -> if (delayed) emptyList() else source.filter { it.direction.equals("LONG", true) }

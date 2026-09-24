@@ -46,8 +46,9 @@ class ViopWatchlistAdapter(
             }
         } ?: "Sözleşme verisi bekleniyor"
 
-        holder.last.text = c?.lastPrice?.takeIf { it.isFinite() }?.let { "%.2f".format(it) } ?: "—"
-        val change = c?.dailyChangePct?.takeIf { it.isFinite() }
+        val contractPriceReady = UiTruthPolicy.canShowViopContract(c)
+        holder.last.text = if (contractPriceReady) c?.lastPrice?.takeIf { it.isFinite() }?.let { "%.2f".format(it) } ?: "—" else "—"
+        val change = if (contractPriceReady) c?.dailyChangePct?.takeIf { it.isFinite() } else null
         holder.change.text = change?.let { "%+.2f%%".format(it) } ?: "—"
 
         val color = holder.itemView.context.getColor(when {
@@ -59,7 +60,7 @@ class ViopWatchlistAdapter(
         holder.change.setTextColor(color)
         holder.last.setTextColor(if (change == null) holder.itemView.context.getColor(R.color.text_primary) else color)
 
-        val underlyingPrice = row.underlyingStock?.quotePrice?.takeIf { it.isFinite() && it > 0.0 }
+        val underlyingPrice = row.underlyingStock?.takeIf(UiTruthPolicy::canShowStock)?.quotePrice?.takeIf { it.isFinite() && it > 0.0 }
         holder.status.text = c?.let {
             when {
                 underlyingPrice != null -> "Dayanak ${"%.2f".format(underlyingPrice)}"

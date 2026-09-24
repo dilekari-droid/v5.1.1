@@ -23,6 +23,7 @@ class ViopAdapter(
 
     override fun onBindViewHolder(holder: H, position: Int) {
         val x = items[position]
+        val priceReady = UiTruthPolicy.canShowViopContract(x)
         fun f(v: Double?): String = v?.takeIf { it.isFinite() }?.let { "%.2f".format(it) } ?: "—"
         fun fp(v: Double?): String = v?.takeIf { it.isFinite() }?.let { "%+.2f%%".format(it) } ?: "—"
         fun time(v:Long) = if(v>0) SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault()).format(Date(v)) else "bilinmiyor"
@@ -33,11 +34,11 @@ class ViopAdapter(
             SignalValidity.REJECTED -> "REDDEDİLDİ"
         }
         holder.text.text = buildString {
-            append("${x.symbol}   ${f(x.lastPrice)} (${fp(x.dailyChangePct)})\n")
+            append("${x.symbol}   ${if (priceReady) f(x.lastPrice) else "—"} (${if (priceReady) fp(x.dailyChangePct) else "—"})\n")
             append("Dayanak: ${x.underlying} • Vade: ${x.expiry} • Tür: ${x.contractType}\n")
-            append("Alış: ${f(x.bid)} • Satış: ${f(x.ask)}\n")
+            append("Alış: ${if (priceReady) f(x.bid) else "—"} • Satış: ${if (priceReady) f(x.ask) else "—"}\n")
             append("Fiyat adımı: ${f(x.tickSize)} • Çarpan: ${f(x.multiplier)}\n")
-            append("Açık pozisyon: ${x.openInterest ?: "—"} • Hacim: ${f(x.volume)}\n")
+            append("Açık pozisyon: ${if (priceReady) x.openInterest ?: "—" else "—"} • Hacim: ${if (priceReady) f(x.volume) else "—"}\n")
             append("Kaynak: ${x.providerLabel} • Veri Modu: ${x.dataMode.name} • $validity\n")
             append("Piyasa Veri Zamanı: ${time(x.exchangeTimestamp)} • Uygulamaya Ulaşma: ${time(x.receivedAt)}\n")
             append(x.validityReason)

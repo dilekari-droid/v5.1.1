@@ -141,7 +141,7 @@
                 <tr.borsatakip.v5.ui.StockSparklineView
                     android:id="@+id/opportunityBenchmarkChart"
                     android:layout_width="92dp"
-                    android:layout_height="38dp"
+                    android:layout_height="48dp"
                     android:layout_marginStart="8dp" />
             </LinearLayout>
 
@@ -196,19 +196,19 @@
             android:scrollbars="none">
             <LinearLayout
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
+                android:layout_height="50dp"
                 android:orientation="horizontal">
-                <TextView android:id="@+id/btnFilterAll" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="70dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_a39264d52a" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterStrongBuy" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="90dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="LONG" android:textColor="@color/green" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterStrongSell" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="90dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="SHORT" android:textColor="@color/red" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterWatch" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="82dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_0d3df47fea" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterStrongLong" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="104dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Güçlü LONG" android:textColor="@color/green_strong" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterStrongShort" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="108dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Güçlü SHORT" android:textColor="@color/red_strong" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterInsufficient" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="110dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Yetersiz Veri" android:textColor="@color/text_secondary" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterRejected" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="92dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Reddedildi" android:textColor="@color/red" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterCatalyst" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="100dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_f19347f99e" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterLowRisk" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="94dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_fb77e3b730" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
-                <TextView android:id="@+id/btnFilterHighVolume" android:layout_width="wrap_content" android:layout_height="34dp" android:minWidth="104dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_f9263ab392" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterAll" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="70dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_a39264d52a" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterStrongBuy" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="90dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="LONG" android:textColor="@color/green" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterStrongSell" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="90dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="SHORT" android:textColor="@color/red" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterWatch" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="82dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_0d3df47fea" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterStrongLong" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="104dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Güçlü LONG" android:textColor="@color/green_strong" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterStrongShort" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="108dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Güçlü SHORT" android:textColor="@color/red_strong" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterInsufficient" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="110dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Yetersiz Veri" android:textColor="@color/text_secondary" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterRejected" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="92dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="Reddedildi" android:textColor="@color/red" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterCatalyst" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="100dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_f19347f99e" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterLowRisk" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="94dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_fb77e3b730" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
+                <TextView android:id="@+id/btnFilterHighVolume" android:layout_width="wrap_content" android:layout_height="48dp" android:minWidth="104dp" android:layout_marginStart="5dp" android:background="@drawable/bg_chip" android:gravity="center" android:paddingHorizontal="12dp" android:maxLines="1" android:text="@string/auto_text_f9263ab392" android:textColor="@color/text_primary" android:textSize="11sp" android:textStyle="bold"/>
             </LinearLayout>
         </HorizontalScrollView>
 
@@ -217,22 +217,21 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="3dp"
-            android:maxLines="2"
-            android:ellipsize="end"
+            android:maxLines="4"
             android:text="@string/auto_text_e3ebddd111"
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="40dp"
+            android:layout_height="50dp"
             android:layout_marginTop="5dp"
             android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/btnRealOpportunityScan"
                 android:layout_width="0dp"
-                android:layout_height="38dp"
+                android:layout_height="48dp"
                 android:layout_weight="1"
                 android:background="@drawable/bg_card_blue"
                 android:gravity="center"
@@ -246,7 +245,7 @@
             <TextView
                 android:id="@+id/btnSignalHistory"
                 android:layout_width="100dp"
-                android:layout_height="38dp"
+                android:layout_height="48dp"
                 android:layout_marginStart="6dp"
                 android:background="@drawable/bg_chip"
                 android:gravity="center"

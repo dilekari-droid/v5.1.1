@@ -74,26 +74,27 @@ class StockDetailActivity : BaseActivity() {
         liveDecision = findViewById(R.id.liveDecision)
         liveTradingViewSignal = findViewById(R.id.liveTradingViewSignal)
 
-        findViewById<TextView>(R.id.title).text = "${x.symbol}  ${money(x.price)}"
+        val verifiedData = UiTruthPolicy.canShowOpportunity(x)
+        findViewById<TextView>(R.id.title).text = if (verifiedData) "${x.symbol}  ${money(x.price)}" else "${x.symbol}  —"
         findViewById<TextView>(R.id.subtitle).text = buildString {
             append(x.companyName ?: "Şirket adı yok")
-            append(" • Günlük ").append(x.dailyChangePct?.let { "%+.2f%%".format(it) } ?: "VERİ YOK")
+            append(if (verifiedData) " • Günlük ${x.dailyChangePct?.let { "%+.2f%%".format(it) } ?: "—"}" else " • Veri doğrulanamadı")
         }
-        findViewById<TextView>(R.id.scoreSummary).text = summaryText()
-        findViewById<TextView>(R.id.overview).text = overviewText()
-        bindFactorCards()
-        findViewById<TextView>(R.id.technicalDetails).text = technicalText()
-        findViewById<TextView>(R.id.dataQuality).text = qualityText()
-        findViewById<TextView>(R.id.dataStatus).text = dataStatusText()
-        bindLiveDecisionSnapshot()
-        renderIntentDisplayQuote()
-        findViewById<TextView>(R.id.validity).text = if (isDelayedObservation()) {
-            "VERİ DURUMU: GECİKMELİ TEKNİK İZLEME\n${x.signalValidityReason}"
-        } else {
-            "SİNYAL GEÇERLİLİĞİ: ${validityLabel()}\n${x.signalValidityReason}"
+        findViewById<TextView>(R.id.scoreSummary).text = if (verifiedData) summaryText() else "DURUM • VERİ YOK\nSinyal, puan ve yön doğrulanmış veri olmadan gösterilmez."
+        findViewById<TextView>(R.id.overview).text = if (verifiedData) overviewText() else "Piyasa veri kaynağından doğrulanmış güncel veri alınamadı."
+        if (verifiedData) bindFactorCards() else bindUnavailableFactorCards()
+        findViewById<TextView>(R.id.technicalDetails).text = if (verifiedData) technicalText() else "Teknik göstergeler • Hesaplanamadı"
+        findViewById<TextView>(R.id.dataQuality).text = if (verifiedData) qualityText() else "VERİ KALİTESİ • DOĞRULANMADI"
+        findViewById<TextView>(R.id.dataStatus).text = if (verifiedData) dataStatusText() else "Veri yok • fiyat, grafik ve işlem sinyali gösterilmiyor"
+        if (verifiedData) bindLiveDecisionSnapshot() else bindUnavailableDecisionSnapshot()
+        if (verifiedData) renderIntentDisplayQuote()
+        findViewById<TextView>(R.id.validity).text = when {
+            !verifiedData -> "SİNYAL DURUMU: VERİ YOK\nDoğrulanmış veri olmadan LONG/SHORT kararı gösterilmez."
+            isDelayedObservation() -> "VERİ DURUMU: GECİKMELİ TEKNİK İZLEME\n${x.signalValidityReason}"
+            else -> "SİNYAL GEÇERLİLİĞİ: ${validityLabel()}\n${x.signalValidityReason}"
         }
 
-        if (isDelayedObservation()) {
+        if (!verifiedData || isDelayedObservation()) {
             chart.signalPrice = null
             chart.signalTime = null
         } else {
@@ -106,7 +107,15 @@ class StockDetailActivity : BaseActivity() {
         findViewById<Button>(R.id.chartZoomOut).setOnClickListener { chart.zoomOut() }
         findViewById<Button>(R.id.chartFullscreen).setOnClickListener { openFullscreenChart() }
         chart.onRequestFullscreen = { openFullscreenChart() }
-        loadTimeframe(ChartTimeframe.ONE_DAY)
+        if (verifiedData) {
+            loadTimeframe(ChartTimeframe.ONE_DAY)
+        } else {
+            chart.timeframeLabel = ChartTimeframe.ONE_DAY.label
+            chart.candles = emptyList()
+            chart.trendAnalysis = null
+            chartStatus.text = "Gerçek OHLCV verisi doğrulanamadı • grafik gösterilmiyor"
+            trendInfoPanel.text = "Trend analizi için doğrulanmış veri gerekli."
+        }
         findViewById<Button>(R.id.btnTechnicalScreen).setOnClickListener { startActivity(Intent(this, TechnicalAnalysisActivity::class.java).putExtra("opportunity", x)) }
         findViewById<Button>(R.id.btnNewsScreen).setOnClickListener { startActivity(Intent(this, NewsActivity::class.java).putExtra("opportunity", x)) }
         findViewById<Button>(R.id.btnSignalScreen).setOnClickListener { startActivity(Intent(this, SignalHistoryActivity::class.java)) }
@@ -144,6 +153,7 @@ class StockDetailActivity : BaseActivity() {
     private fun refreshDisplayQuote() {
         lifecycleScope.launch {
             val stock = runCatching { quoteProvider.fetchOne(x.symbol) }.getOrNull() ?: return@launch
+            if (!UiTruthPolicy.canShowStock(stock)) return@launch
             val price = stock.quotePrice ?: stock.candles.lastOrNull()?.close ?: return@launch
             if (!price.isFinite() || price <= 0.0) return@launch
             val prev = stock.previousClose
@@ -255,11 +265,11 @@ class StockDetailActivity : BaseActivity() {
                 }
 
                 override fun onDisconnected(reason: String) = runOnUiThread {
-                    liveConnectionStatus.text = "Canlı bağlantı kapandı • $reason"
+                    liveConnectionStatus.text = UiTruthPolicy.userMessage(reason, "Canlı bağlantı kapandı")
                 }
 
                 override fun onError(message: String) = runOnUiThread {
-                    liveConnectionStatus.text = "Canlı kanal: $message"
+                    liveConnectionStatus.text = UiTruthPolicy.userMessage(message, "Canlı veri kanalı doğrulanamadı")
                 }
             }
         )
@@ -317,6 +327,19 @@ class StockDetailActivity : BaseActivity() {
             append("\nGÜNLÜK DEĞİŞİM  ").append(x.dailyChangePct?.let { "%+.2f%%".format(it) } ?: "VERİ YOK")
         }
         liveQuote.setTextColor(directionColor(x.dailyChangePct))
+    }
+
+    private fun bindUnavailableDecisionSnapshot() {
+        liveQuote.text = "SON FİYAT  —\nGÜNLÜK DEĞİŞİM  —\nVeri doğrulanamadı"
+        liveQuote.setTextColor(getColor(R.color.text_secondary))
+        liveVolume.text = "HACİM  —"
+        liveTrend.text = "TREND  —"
+        liveV5Score.text = "V5 SKOR  —   •   RİSK —"
+        liveDecision.text = "V5 KARARI  VERİ YOK"
+        liveDecision.setTextColor(getColor(R.color.text_secondary))
+        liveCandle.text = "MUM VERİSİ  —"
+        liveMomentum.text = "MOMENTUM  —"
+        liveTradingViewSignal.text = "TradingView doğrulaması yok"
     }
 
     private fun directionColor(changePct: Double?): Int = when {
@@ -399,7 +422,7 @@ class StockDetailActivity : BaseActivity() {
                 chart.timeframeLabel = timeframe.label
                 chart.candles = emptyList()
                 chart.trendAnalysis = null
-                chartStatus.text = "${timeframe.label}: gerçek OHLCV verisi alınamadı • ${error.message ?: error.javaClass.simpleName}"
+                chartStatus.text = "${timeframe.label}: ${UiTruthPolicy.userMessage(error.message, "gerçek OHLCV verisi alınamadı")}"
                 trendInfoPanel.text = "Trend analizi için yeterli veri yok."
             }
         }
@@ -473,6 +496,14 @@ class StockDetailActivity : BaseActivity() {
         } else {
             "$emaState $volume Nihai Sinyal ${x.finalSignalScore}/100 bir başarı olasılığı değildir; veri ve teknik koşulların mevcut sürümdeki birleşik skorudur."
         }
+    }
+
+    private fun bindUnavailableFactorCards() {
+        findViewById<TextView>(R.id.trendCard).text = "TREND\nVERİ YOK"
+        findViewById<TextView>(R.id.momentumCard).text = "MOMENTUM\nVERİ YOK"
+        findViewById<TextView>(R.id.macdCard).text = "MACD\nVERİ YOK"
+        findViewById<TextView>(R.id.volumeCard).text = "HACİM\nVERİ YOK"
+        findViewById<TextView>(R.id.extraCard).text = "EK FAKTÖRLER\nDoğrulanmış piyasa verisi olmadan teknik faktör yayımlanmaz."
     }
 
     private fun bindFactorCards() {

@@ -218,17 +218,17 @@ class BistScanActivity : BaseActivity() {
         statusText.text = when (session.status) {
             ManualScanStatus.IDLE -> "HAZIR"
             ManualScanStatus.PREFLIGHT -> "DOĞRULANIYOR"
-            ManualScanStatus.RUNNING -> "SCANNING"
-            ManualScanStatus.PAUSED -> "PAUSED"
+            ManualScanStatus.RUNNING -> "TARANIYOR"
+            ManualScanStatus.PAUSED -> "DURAKLATILDI"
             ManualScanStatus.FINALIZING -> "SONUÇ KAYDEDİLİYOR"
-            ManualScanStatus.COMPLETED -> "COMPLETED"
+            ManualScanStatus.COMPLETED -> "TAMAMLANDI"
             ManualScanStatus.PARTIAL -> "KISMİ TAMAMLANDI"
-            ManualScanStatus.STOPPED -> "STOPPED"
-            ManualScanStatus.ERROR -> "ERROR"
+            ManualScanStatus.STOPPED -> "DURDURULDU"
+            ManualScanStatus.ERROR -> "HATA"
             ManualScanStatus.DATA_UNAVAILABLE -> "VERİ YOK"
             ManualScanStatus.INTERRUPTED -> "KESİLDİ"
         }
-        heroSubtitle.text = session.message ?: initialHeroMessage()
+        heroSubtitle.text = if (session.status in setOf(ManualScanStatus.ERROR, ManualScanStatus.DATA_UNAVAILABLE, ManualScanStatus.INTERRUPTED)) UiTruthPolicy.userMessage(session.message, initialHeroMessage()) else session.message ?: initialHeroMessage()
         currentSymbolText.text = "İşlenen: ${session.currentSymbol ?: "—"}"
         providerStatusText.text = "Kaynak: ${session.providerStatus} • ${session.dataQuality.name}"
         lastUpdateText.text = "Son güncelleme: ${session.lastUpdate.takeIf { it > 0L }?.let { timeFormat.format(Date(it)) } ?: "—"}"
@@ -502,7 +502,7 @@ class BistScanActivity : BaseActivity() {
         val pct = if (price != null && previous != null && price.isFinite() && previous.isFinite() && previous > 0.0) {
             ((price / previous) - 1.0) * 100.0
         } else null
-        if (stock == null || price == null || !price.isFinite() || price <= 0.0) {
+        if (!UiTruthPolicy.canShowStock(stock) || price == null || !price.isFinite() || price <= 0.0) {
             value.text = "—"
             change.text = "Veri yok"
             change.setTextColor(getColor(R.color.text_secondary))
@@ -510,26 +510,27 @@ class BistScanActivity : BaseActivity() {
             return
         }
         value.text = if (price >= 1000.0) "%,.2f".format(Locale.getDefault(), price) else "%.2f".format(Locale.getDefault(), price)
-        val status = MarketDataQuality.uiStatus(stock.marketDataMetadata)
+        val displayStock = stock ?: return
+        val status = MarketDataQuality.uiStatus(displayStock.marketDataMetadata)
         change.text = listOfNotNull(pct?.let { "%+.2f%%".format(Locale.getDefault(), it) }, status.takeIf { it.isNotBlank() }).joinToString(" • ")
         change.setTextColor(when {
-            stock.marketDataMetadata?.isOffline == true -> getColor(R.color.text_secondary)
+            displayStock.marketDataMetadata?.isOffline == true -> getColor(R.color.text_secondary)
             pct == null -> getColor(R.color.text_secondary)
             pct > 0.0 -> getColor(R.color.green)
             pct < 0.0 -> getColor(R.color.red)
             else -> getColor(R.color.text_secondary)
         })
-        chart.setCandles(stock.candles, pct)
+        chart.setCandles(displayStock.candles, pct)
     }
 
     private fun bindMarketVolume(stock: Stock?) {
         val value = findViewById<TextView>(R.id.scanMarketVolumeValue)
         val status = findViewById<TextView>(R.id.scanMarketVolumeStatus)
-        val latest = stock?.candles?.lastOrNull()
+        val latest = stock?.takeIf(UiTruthPolicy::canShowStock)?.candles?.lastOrNull()
         val volume = latest?.volume?.takeIf { it.isFinite() && it > 0.0 }
         if (volume == null) {
             value.text = "—"
-            status.text = "XUTUM 5 DK mum hacmi alınamadı"
+            status.text = "Hacim verisi doğrulanamadı"
             status.setTextColor(getColor(R.color.text_secondary))
             return
         }
@@ -580,8 +581,8 @@ class BistScanActivity : BaseActivity() {
         ProviderFailureCode.BACKEND_URL_MISSING, ProviderFailureCode.API_KEY_MISSING, ProviderFailureCode.INVALID_HTTPS -> "${timeframe.label} taraması için Production Backend bağlantısı gerekli."
         ProviderFailureCode.AUTH_ERROR -> "Production Backend kimlik doğrulaması başarısız. API anahtarını kontrol edin."
         ProviderFailureCode.RATE_LIMIT -> "${timeframe.label} verisi için istek sınırı aşıldı. Tarama sahte sonuç üretmeden durduruldu."
-        ProviderFailureCode.EMPTY_DATA, ProviderFailureCode.BIST_HISTORY_ERROR, ProviderFailureCode.STALE_DATA -> "${timeframe.label} periyodu seçildi ancak gerçek OHLCV hazır değil. ${detail.orEmpty()}"
-        else -> "${timeframe.label} veri servisine ulaşılamadı. ${detail.orEmpty()}"
+        ProviderFailureCode.EMPTY_DATA, ProviderFailureCode.BIST_HISTORY_ERROR, ProviderFailureCode.STALE_DATA -> "${timeframe.label} periyodu için güncel OHLCV verisi doğrulanamadı."
+        else -> UiTruthPolicy.userMessage(detail, "${timeframe.label} veri servisine şu anda ulaşılamıyor.")
     }
 
     private fun refreshSourceLabel() {

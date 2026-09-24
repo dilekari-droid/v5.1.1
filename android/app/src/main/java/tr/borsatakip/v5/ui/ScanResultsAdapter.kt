@@ -59,6 +59,7 @@ class ScanResultsAdapter(
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val item = items[position]
+        val available = UiTruthPolicy.canShowOpportunity(item)
         val symbol = item.symbol.trim().uppercase(Locale.ROOT)
         val company = item.companyName?.trim().takeUnless { it.isNullOrBlank() } ?: symbol
         val delayedObservation = item.dataMode != DataMode.REALTIME || !item.isRealtime
@@ -69,25 +70,27 @@ class ScanResultsAdapter(
         val timeframeLabel = ScanTimeframe.displayLabel(item.analysisTimeframeMinutes)
         holder.company.text = company
         holder.symbol.text = "$symbol — $timeframeLabel FIRSAT"
-        bindPriceMovement(holder.priceMovement, item.price, item.dailyChangePct)
+        if (available) bindPriceMovement(holder.priceMovement, item.price, item.dailyChangePct) else bindUnavailablePrice(holder.priceMovement)
         val directionLabel = when {
             delayedObservation -> "TEKNİK İZLEME"
             direction.equals("LONG", true) -> "▲ AL ADAYI"
             direction.equals("SHORT", true) -> "▼ SAT ADAYI"
             else -> "İZLE"
         }
-        holder.direction.text = directionLabel
-        holder.direction.contentDescription = if (delayedObservation) "Gecikmeli teknik izleme; AL/SAT sinyali yok" else "Sinyal yönü: $directionLabel"
-        holder.strengthBar.progress = score
-        holder.strengthValue.text = "$score/100"
-        holder.strengthTier.text = if (delayedObservation) {
+        holder.direction.text = if (available) directionLabel else "VERİ YOK"
+        holder.direction.contentDescription = if (!available) "Sinyal yönü doğrulanamadı" else if (delayedObservation) "Gecikmeli teknik izleme; AL/SAT sinyali yok" else "Sinyal yönü: $directionLabel"
+        holder.strengthBar.progress = if (available) score else 0
+        holder.strengthValue.text = if (available) "$score/100" else "—"
+        holder.strengthTier.text = if (!available) {
+            "Veri doğrulanamadı • sinyal gücü gösterilmiyor"
+        } else if (delayedObservation) {
             "TREND: ${trendStyle.arrow} ${trendStyle.label} • TEKNİK PUAN • GECİKMELİ VERİ • AL/SAT YOK"
         } else {
             "TREND: ${trendStyle.arrow} ${trendStyle.label} • ${strengthLabel(score)} • ${validityLabel(item)}"
         }
-        holder.technicalScore.text = "TEKNİK SKOR\n${item.score.coerceIn(0, 100)}/100"
-        holder.riskScore.text = "RİSK\n${item.riskScore.coerceIn(0, 100)}/100"
-        holder.confidenceScore.text = "VERİ GÜVENİ\n${item.dataConfidenceScore.coerceIn(0, 100)}/100\n${item.dataConfidenceLabel}"
+        holder.technicalScore.text = if (available) "TEKNİK SKOR\n${item.score.coerceIn(0, 100)}/100" else "TEKNİK SKOR\n—"
+        holder.riskScore.text = if (available) "RİSK\n${item.riskScore.coerceIn(0, 100)}/100" else "RİSK\n—"
+        holder.confidenceScore.text = if (available) "VERİ GÜVENİ\n${item.dataConfidenceScore.coerceIn(0, 100)}/100\n${item.dataConfidenceLabel}" else "VERİ GÜVENİ\n—"
 
         holder.dataMode.text = dataModeLabel(item.dataMode)
         holder.source.text = buildString {
@@ -104,7 +107,7 @@ class ScanResultsAdapter(
             if (receivedTime != "bilinmiyor") append(" • Uygulamaya geliş: $receivedTime")
         }
 
-        holder.levels.text = buildString {
+        holder.levels.text = if (!available) "Destek: —   •   Direnç: —" else buildString {
             append("Destek: ${priceOrMissing(item.support)}")
             append("   •   Direnç: ${priceOrMissing(item.resistance)}")
         }
@@ -113,7 +116,7 @@ class ScanResultsAdapter(
         val hasVolume = !item.volumeLabel.equals("Veri yok", true) && item.volumeLabel.isNotBlank()
         val hasOhlcv = item.candles.isNotEmpty()
         val hasKap = !item.kapLabel.equals("Veri yok", true) && item.kapLabel.isNotBlank()
-        holder.coverage.text = "Veri kapsamı: Fiyat ${mark(hasPrice)} • Hacim ${mark(hasVolume)} • OHLCV ${mark(hasOhlcv)} • KAP ${mark(hasKap)}"
+        holder.coverage.text = if (available) "Veri kapsamı: Fiyat ${mark(hasPrice)} • Hacim ${mark(hasVolume)} • OHLCV ${mark(hasOhlcv)} • KAP ${mark(hasKap)}" else "Veri kapsamı: DOĞRULANMADI"
 
         val factors = item.scoreBreakdown.asSequence()
             .takeWhile { !it.startsWith("KAP:") }
@@ -122,12 +125,12 @@ class ScanResultsAdapter(
             .distinct()
             .take(4)
             .toList()
-        holder.reason.text = buildString {
+        holder.reason.text = if (!available) "Doğrulanmış piyasa verisi yok; sinyal özeti gösterilmiyor." else buildString {
             append(if (delayedObservation) "Teknik analiz özeti: " else "Sinyal özeti: ")
             append(if (delayedObservation) item.signalValidityReason else if (factors.isEmpty()) item.signalValidityReason else factors.joinToString(" • "))
         }
 
-        applyVisuals(holder, direction, score, delayedObservation, trendStyle)
+        applyVisuals(holder, direction, score, delayedObservation, trendStyle, available)
         holder.itemView.setOnClickListener { click(item) }
     }
 
@@ -136,17 +139,19 @@ class ScanResultsAdapter(
         direction: String,
         score: Int,
         delayedObservation: Boolean,
-        trendStyle: TrendUiStyle
+        trendStyle: TrendUiStyle,
+        available: Boolean
     ) {
         val isLong = direction.equals("LONG", true)
         val isShort = direction.equals("SHORT", true)
         val signalAccent = when {
+            !available -> Color.rgb(143, 163, 184)
             delayedObservation -> Color.rgb(96, 165, 250)
             isLong -> Color.rgb(0, 240, 128)
             isShort -> Color.rgb(255, 69, 69)
             else -> Color.rgb(250, 204, 21)
         }
-        val trendAccent = Color.rgb(trendStyle.red, trendStyle.green, trendStyle.blue)
+        val trendAccent = if (available) Color.rgb(trendStyle.red, trendStyle.green, trendStyle.blue) else Color.rgb(143, 163, 184)
         val strength = score / 100f
         val border = ColorUtils.blendARGB(trendAccent, Color.WHITE, strength * 0.20f)
         holder.itemView.background = GradientDrawable().apply {
@@ -165,6 +170,11 @@ class ScanResultsAdapter(
         holder.strengthValue.setTextColor(trendAccent)
         holder.strengthBar.progressTintList = ColorStateList.valueOf(trendAccent)
         holder.strengthBar.progressBackgroundTintList = ColorStateList.valueOf(ColorUtils.setAlphaComponent(trendAccent, 40))
+    }
+
+    private fun bindUnavailablePrice(view: TextView) {
+        view.text = "Veri yok"
+        view.setTextColor(view.context.getColor(R.color.text_secondary))
     }
 
     private fun bindPriceMovement(view: TextView, price: Double, changePct: Double?) {

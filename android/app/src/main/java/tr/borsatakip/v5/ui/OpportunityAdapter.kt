@@ -55,6 +55,7 @@ class OpportunityAdapter(
 
     override fun onBindViewHolder(holder: H, position: Int) {
         val x = items[position]
+        val available = UiTruthPolicy.canShowOpportunity(x)
         val p = OpportunityDiscoveryPresentation.from(x)
         val trendStyle = TrendUiPolicy.resolve(x)
         val symbolUpper = x.symbol.trim().uppercase(Locale.ROOT)
@@ -65,21 +66,21 @@ class OpportunityAdapter(
         holder.badge.text = symbolUpper.take(5)
         holder.symbol.text = symbolUpper
         holder.company.text = companyText
-        bindPriceMovement(holder.priceMovement, x.price, x.dailyChangePct)
+        if (available) bindPriceMovement(holder.priceMovement, x.price, x.dailyChangePct) else bindUnavailablePrice(holder.priceMovement)
         holder.favorite.text = if (isFav) "★" else "☆"
         holder.favorite.contentDescription = if (isFav) "Favorilerden çıkar" else "Favoriye ekle"
         holder.favorite.setOnClickListener { toggleFavorite(x) }
 
-        val directionLabel = OpportunityUiPolicy.directionLabel(x)
+        val directionLabel = if (available) OpportunityUiPolicy.directionLabel(x) else "VERİ YOK"
         holder.label.text = directionLabel
-        holder.score.text = x.rankingScore.toString()
+        holder.score.text = if (available) x.rankingScore.toString() else "—"
         holder.reason.text = p.reason.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("tr", "TR")) else it.toString() }
 
-        val signalStyle = SignalVisualPolicy.resolve(x.direction, x.longScore, x.shortScore)
+        val signalStyle = if (available) SignalVisualPolicy.resolve(x.direction, x.longScore, x.shortScore) else null
         holder.scoreBar.progress = signalStyle?.quality ?: 0
-        holder.sparkline.setCandles(x.candles, x.dailyChangePct)
+        holder.sparkline.setCandles(if (available) x.candles else emptyList(), if (available) x.dailyChangePct else null)
         val signalAccent = signalStyle?.let { Color.rgb(it.red, it.green, it.blue) } ?: Color.rgb(180, 190, 200)
-        val trendAccent = Color.rgb(trendStyle.red, trendStyle.green, trendStyle.blue)
+        val trendAccent = if (available) Color.rgb(trendStyle.red, trendStyle.green, trendStyle.blue) else Color.rgb(143, 163, 184)
         val statusAccent = when (directionLabel) {
             "LONG" -> Color.rgb(0, 230, 118)
             "SHORT" -> Color.rgb(255, 59, 77)
@@ -100,7 +101,7 @@ class OpportunityAdapter(
             setColor(ColorUtils.setAlphaComponent(trendAccent, 52))
             setStroke((1.2f * holder.itemView.resources.displayMetrics.density).toInt().coerceAtLeast(1), trendAccent)
         }
-        holder.badge.contentDescription = "${x.symbol}, trend ${trendStyle.label}"
+        holder.badge.contentDescription = if (available) "${x.symbol}, trend ${trendStyle.label}" else "${x.symbol}, veri doğrulanamadı"
         holder.scoreBox.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 10f * holder.itemView.resources.displayMetrics.density
@@ -109,16 +110,17 @@ class OpportunityAdapter(
         }
 
         val riskLabel = when {
+            !available -> "—"
             x.riskScore <= 30 -> "Düşük"
             x.riskScore <= 60 -> "Orta"
             else -> "Yüksek"
         }
         holder.risk.text = "Risk\n$riskLabel"
-        holder.volume.text = "Hacim\n${x.technical.volumeRatio?.let { "%.1fx".format(it) } ?: "Veri yok"}"
-        holder.catalyst.text = "Katalizör\n${if (p.catalystAvailable) x.kapLabel.take(18) else "Veri yok"}"
+        holder.volume.text = "Hacim\n${if (available) x.technical.volumeRatio?.let { "%.1fx".format(it) } ?: "Veri yok" else "—"}"
+        holder.catalyst.text = "Katalizör\n${if (available && p.catalystAvailable) x.kapLabel.take(18) else "—"}"
 
         val prioritized = p.factors.filter { it.score != null }.sortedByDescending { it.score }.take(5)
-        holder.factors.text = buildString {
+        holder.factors.text = if (!available) "KARAR DESTEK ÖZETİ\nVeri doğrulanamadı • gerçek sinyal/puan gösterilmiyor" else buildString {
             append("KARAR DESTEK ÖZETİ\n")
             append("${x.direction} • LONG ${x.longScore}/100 • SHORT ${x.shortScore}/100 • Nihai ${x.finalSignalScore}/100 • Sıralama ${x.rankingScore}/100\n")
             append("${x.setupType}")
@@ -135,7 +137,7 @@ class OpportunityAdapter(
             val unavailable = p.factors.count { it.score == null }
             if (unavailable > 0) append("\nEksik faktör: ").append(unavailable).append("/12")
         }
-        holder.coverage.text = buildString {
+        holder.coverage.text = if (!available) "Veri durumu: DOĞRULANMADI" else buildString {
             append("Kanıt kapsamı %${p.coveragePct} • Veri güveni ${x.dataConfidenceScore}/100 • Veri modu ${x.dataMode.name}")
             if (ScanTimeframe.isSupportedStored(x.analysisTimeframeMinutes)) append(" • Analiz ${ScanTimeframe.displayLabel(x.analysisTimeframeMinutes)}")
             if (x.scanCadenceMinutes > 0) append(" • Cadence ${x.scanCadenceMinutes} DK")
@@ -156,6 +158,12 @@ class OpportunityAdapter(
         holder.detail.setOnClickListener { click(x) }
         holder.itemView.setOnClickListener { click(x) }
     }
+    private fun bindUnavailablePrice(view: TextView) {
+        view.text = "Veri yok"
+        view.setTextColor(view.context.getColor(R.color.text_secondary))
+        view.contentDescription = "Fiyat ve değişim verisi doğrulanamadı"
+    }
+
     private fun bindPriceMovement(view: TextView, price: Double, changePct: Double?) {
         val validPrice = price.isFinite() && price > 0.0
         val validChange = changePct?.isFinite() == true

@@ -82,12 +82,12 @@ class OpportunityActivity : BaseActivity() {
             BistScanStartGate.Outcome.PROVIDER_UNAVAILABLE -> {
                 opportunityUiDataState = OpportunityUiDataState.UNAVAILABLE
                 summary.text = "Veri sağlayıcı hazır değil • Ayarlar bölümünü kontrol edin"
-                updateTopMetrics(AppSession.lastOpportunities)
+                updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
             }
             BistScanStartGate.Outcome.FAILED -> {
                 opportunityUiDataState = OpportunityUiDataState.ERROR
                 summary.text = if (granted) "BIST tarama servisi başlatılamadı" else "Manuel tarama için bildirim izni gerekir"
-                updateTopMetrics(AppSession.lastOpportunities)
+                updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
             }
         }
     }
@@ -176,12 +176,12 @@ class OpportunityActivity : BaseActivity() {
                     BistScanStartGate.Outcome.PROVIDER_UNAVAILABLE -> {
                         opportunityUiDataState = OpportunityUiDataState.UNAVAILABLE
                         summary.text = "Veri sağlayıcı hazır değil • Ayarlar bölümünü kontrol edin"
-                        updateTopMetrics(AppSession.lastOpportunities)
+                        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     BistScanStartGate.Outcome.FAILED -> {
                         opportunityUiDataState = OpportunityUiDataState.ERROR
                         summary.text = "BIST tarama servisi başlatılamadı"
-                        updateTopMetrics(AppSession.lastOpportunities)
+                        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                 }
             }
@@ -195,19 +195,19 @@ class OpportunityActivity : BaseActivity() {
                         opportunityUiDataState = OpportunityUiDataState.WAITING
                         val total = session.totalCount.takeIf { it > 0 }?.toString() ?: "?"
                         summary.text = "BIST verisi doğrulanıyor • ${session.scannedCount}/$total • ${session.currentSymbol ?: session.phase}"
-                        updateTopMetrics(AppSession.lastOpportunities)
+                        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     ManualScanStatus.RUNNING, ManualScanStatus.FINALIZING -> {
                         opportunityUiDataState = OpportunityUiDataState.ANALYZING
                         val total = session.totalCount.takeIf { it > 0 }?.toString() ?: "?"
                         summary.text = "Analiz ediliyor • ${session.scannedCount}/$total • %${session.progress} • ${session.currentSymbol ?: session.phase}"
-                        updateTopMetrics(AppSession.lastOpportunities)
+                        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     ManualScanStatus.PAUSED -> {
                         opportunityUiDataState = OpportunityUiDataState.ANALYZING
                         val total = session.totalCount.takeIf { it > 0 }?.toString() ?: "?"
                         summary.text = "Tarama duraklatıldı • ağ bağlantısı bekleniyor • ${session.scannedCount}/$total • %${session.progress}"
-                        updateTopMetrics(AppSession.lastOpportunities)
+                        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     ManualScanStatus.COMPLETED, ManualScanStatus.PARTIAL -> {
                         opportunityUiDataState = if (session.status == ManualScanStatus.PARTIAL || session.dataQuality == ManualDataQuality.PARTIAL) OpportunityUiDataState.PARTIAL else OpportunityUiDataState.READY
@@ -220,17 +220,17 @@ class OpportunityActivity : BaseActivity() {
                     ManualScanStatus.DATA_UNAVAILABLE -> {
                         opportunityUiDataState = OpportunityUiDataState.UNAVAILABLE
                         if (AppSession.lastOpportunities.isEmpty()) bindFiltered(emptyList(), "Veri yok / analiz bekleniyor • ${session.message.orEmpty()}")
-                        else updateTopMetrics(AppSession.lastOpportunities)
+                        else updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     ManualScanStatus.ERROR, ManualScanStatus.INTERRUPTED -> {
                         opportunityUiDataState = OpportunityUiDataState.ERROR
                         if (AppSession.lastOpportunities.isEmpty()) bindFiltered(emptyList(), "Analiz edilemedi • ${session.message.orEmpty()}")
-                        else updateTopMetrics(AppSession.lastOpportunities)
+                        else updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     ManualScanStatus.STOPPED -> {
                         opportunityUiDataState = OpportunityUiDataState.UNAVAILABLE
                         summary.text = "Tarama durduruldu • tamamlandı sayılmadı • son doğrulanmış sonuç korunuyor"
-                        updateTopMetrics(AppSession.lastOpportunities)
+                        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                     }
                     ManualScanStatus.IDLE -> Unit
                 }
@@ -289,7 +289,7 @@ class OpportunityActivity : BaseActivity() {
                 override fun onSubscribed() = runOnUiThread {
                     if (AppSession.lastOpportunities.isEmpty()) summary.text = "Canlı BIST scanner bağlandı • fırsat bekleniyor"
                     opportunityUiDataState = OpportunityUiDataState.WAITING
-                    updateTopMetrics(AppSession.lastOpportunities)
+                    updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
                 }
 
                 override fun onSnapshot(snapshot: RealtimeScannerClient.Snapshot) = runOnUiThread {
@@ -313,13 +313,13 @@ class OpportunityActivity : BaseActivity() {
                 override fun onDisconnected(reason: String) = runOnUiThread {
                     AppSession.lastOpportunities = emptyList()
                     opportunityUiDataState = OpportunityUiDataState.UNAVAILABLE
-                    lifecycleScope.launch { bindFiltered(emptyList(), "Canlı scanner bağlantısı kapandı • $reason • veri yok fırsat 0 sayılmadı") }
+                    lifecycleScope.launch { bindFiltered(emptyList(), UiTruthPolicy.userMessage(reason, "Canlı scanner bağlantısı kapandı • veri yok fırsat 0 sayılmadı")) }
                 }
 
                 override fun onError(message: String) = runOnUiThread {
                     AppSession.lastOpportunities = emptyList()
                     opportunityUiDataState = OpportunityUiDataState.ERROR
-                    lifecycleScope.launch { bindFiltered(emptyList(), "Canlı scanner hatası • $message • veri yok fırsat 0 sayılmadı") }
+                    lifecycleScope.launch { bindFiltered(emptyList(), UiTruthPolicy.userMessage(message, "Canlı scanner verisi doğrulanamadı • veri yok fırsat 0 sayılmadı")) }
                 }
             }
         )
@@ -331,7 +331,7 @@ class OpportunityActivity : BaseActivity() {
     }
 
     private suspend fun applyDiscoveryFilter(prefix: String? = null) {
-        val base = OpportunityFilterPolicy.apply(AppSession.lastOpportunities, OpportunityFilter.ALL)
+        val base = OpportunityFilterPolicy.apply(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity), OpportunityFilter.ALL)
         val filtered = base.filter { x ->
             val p = OpportunityDiscoveryPresentation.from(x)
             when (selectedFilter) {
@@ -357,7 +357,7 @@ class OpportunityActivity : BaseActivity() {
     private suspend fun bindFiltered(items: List<Opportunity>, title: String) {
         refreshFavoriteSymbols()
         summary.text = title
-        updateTopMetrics(AppSession.lastOpportunities)
+        updateTopMetrics(AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity))
         list.adapter = if (selectedFilter == DiscoveryFilter.ALL && OpportunityUiPolicy.isNumericState(opportunityUiDataState)) {
             val longs = items.filter { OpportunityUiPolicy.directionLabel(it) == "LONG" }
             val shorts = items.filter { OpportunityUiPolicy.directionLabel(it) == "SHORT" }
@@ -436,7 +436,7 @@ class OpportunityActivity : BaseActivity() {
         val pct = if (price != null && previous != null && price.isFinite() && previous.isFinite() && previous > 0.0) {
             ((price / previous) - 1.0) * 100.0
         } else null
-        if (stock == null || price == null || !price.isFinite() || price <= 0.0) {
+        if (!UiTruthPolicy.canShowStock(stock) || price == null || !price.isFinite() || price <= 0.0) {
             value.text = "—"
             change.text = "Benchmark verisi alınamadı"
             change.setTextColor(getColor(R.color.text_secondary))
@@ -444,7 +444,8 @@ class OpportunityActivity : BaseActivity() {
             return
         }
         value.text = if (price >= 1000.0) "%,.2f".format(Locale.getDefault(), price) else "%.2f".format(Locale.getDefault(), price)
-        val status = MarketDataQuality.uiStatus(stock.marketDataMetadata)
+        val displayStock = stock ?: return
+        val status = MarketDataQuality.uiStatus(displayStock.marketDataMetadata)
         change.text = listOfNotNull(pct?.let { "%+.2f%%".format(Locale.getDefault(), it) }, status.takeIf { it.isNotBlank() }).joinToString(" • ")
         change.setTextColor(when {
             pct == null -> getColor(R.color.text_secondary)
@@ -452,7 +453,7 @@ class OpportunityActivity : BaseActivity() {
             pct < 0.0 -> getColor(R.color.red)
             else -> getColor(R.color.text_secondary)
         })
-        chart.setCandles(stock.candles, pct)
+        chart.setCandles(displayStock.candles, pct)
     }
 
     private fun updateTopMetrics(items: List<Opportunity>) {
@@ -495,8 +496,10 @@ class OpportunityActivity : BaseActivity() {
 
     private suspend fun showExisting() {
         val settings = SettingsStore(this)
-        if (AppSession.lastOpportunities.isEmpty()) {
+        val verified = AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity)
+        if (verified.isEmpty()) {
             val text = when {
+                AppSession.lastOpportunities.isNotEmpty() -> "Kayıtlı sonuç var ancak veri doğrulanamadı • fiyat, grafik ve sinyal gösterilmiyor"
                 productionBackendConfigured(settings) -> "Kayıtlı fırsat yok • FIRSATLARI YENİLE ile Production verisini değerlendir"
                 fallbackAllowed(settings) -> "Kayıtlı doğrulanmış fırsat yok • Yahoo YEDEK/GECİKMELİ analiz kullanılabilir"
                 else -> "Kayıtlı doğrulanmış fırsat yok • veri sağlayıcı hazır değil"

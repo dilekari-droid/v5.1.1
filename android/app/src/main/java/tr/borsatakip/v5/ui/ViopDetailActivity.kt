@@ -142,6 +142,7 @@ class ViopDetailActivity : BaseActivity() {
             val provider = BackendProvider(this@ViopDetailActivity)
             try {
                 provider.loadViopQuote(c.symbol).getOrThrow().also {
+                    require(UiTruthPolicy.canShowViopQuote(it)) { "STALE_DATA: VİOP quote güncel/doğrulanmış değil." }
                     quote = it
                     renderQuoteCard()
                     renderDepth()
@@ -155,7 +156,7 @@ class ViopDetailActivity : BaseActivity() {
                 val hasVerified = ViopDetailPresentationPolicy.dataState(quote) == ViopDetailDataState.LIVE
                 setStatusMessage(
                     if (hasVerified) "Grafik yenilenemedi • doğrulanmış mevcut quote korunuyor."
-                    else "VİOP quote/history doğrulanamadı • ${error.message ?: "veri alınamadı"}",
+                    else UiTruthPolicy.userMessage(error.message, "VİOP quote/history doğrulanamadı • veri gösterilmiyor"),
                     if (hasVerified) R.color.yellow else R.color.red
                 )
             }
@@ -189,7 +190,7 @@ class ViopDetailActivity : BaseActivity() {
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (error: Exception) {
-                setStatusMessage("${spec.displayLabel} grafiği alınamadı • ${error.message ?: "veri yok"}", R.color.red)
+                setStatusMessage(UiTruthPolicy.userMessage(error.message, "${spec.displayLabel} grafiği için doğrulanmış veri alınamadı"), R.color.red)
             }
         }
     }
@@ -215,10 +216,11 @@ class ViopDetailActivity : BaseActivity() {
     private fun renderQuoteCard() {
         val q = quote
         val state = ViopDetailPresentationPolicy.dataState(q)
-        findViewById<TextView>(R.id.viopDetailPrice).text = q?.price?.takeIf { it.isFinite() && it > 0.0 }?.let(::formatPrice) ?: "—"
+        val displayable = UiTruthPolicy.canShowViopQuote(q)
+        findViewById<TextView>(R.id.viopDetailPrice).text = if (displayable) q?.price?.takeIf { it.isFinite() && it > 0.0 }?.let(::formatPrice) ?: "—" else "—"
 
         val changeView = findViewById<TextView>(R.id.viopDetailChange)
-        val change = q?.dailyChangePct
+        val change = if (displayable) q?.dailyChangePct else null
         changeView.text = change?.let { "%+.2f%%".format(Locale.US, it) } ?: "—"
         changeView.setTextColor(getColor(when {
             change == null -> R.color.text_secondary
@@ -236,8 +238,8 @@ class ViopDetailActivity : BaseActivity() {
             ViopDetailDataState.UNAVAILABLE -> R.color.text_secondary
         }))
 
-        findViewById<TextView>(R.id.viopVolume).text = "Hacim ${q?.volume?.let(::formatCompact) ?: "—"}"
-        findViewById<TextView>(R.id.viopOpenInterest).text = "Açık Poz. ${q?.openInterest?.let(::formatLong) ?: "—"}"
+        findViewById<TextView>(R.id.viopVolume).text = "Hacim ${if (displayable) q?.volume?.let(::formatCompact) ?: "—" else "—"}"
+        findViewById<TextView>(R.id.viopOpenInterest).text = "Açık Poz. ${if (displayable) q?.openInterest?.let(::formatLong) ?: "—" else "—"}"
         findViewById<TextView>(R.id.viopDataAge).text = q?.exchangeTimestamp?.takeIf { it > 0L }?.let {
             "Veri ${formatAge(System.currentTimeMillis() - it)}"
         } ?: "Veri zamanı —"
@@ -268,7 +270,8 @@ class ViopDetailActivity : BaseActivity() {
 
     private fun renderSignal() {
         val o = opportunity
-        val verifiedDirection = ViopDetailPresentationPolicy.verifiedDirection(o)
+        val currentDataReady = UiTruthPolicy.canShowViopQuote(quote)
+        val verifiedDirection = if (currentDataReady) ViopDetailPresentationPolicy.verifiedDirection(o) else null
         val directionView = findViewById<TextView>(R.id.viopSignalDirection)
         directionView.text = verifiedDirection ?: if (o == null) "SİNYAL YOK" else "İZLE"
         directionView.setTextColor(getColor(when (verifiedDirection) {
@@ -276,10 +279,11 @@ class ViopDetailActivity : BaseActivity() {
             "SHORT" -> R.color.red
             else -> R.color.text_secondary
         }))
-        findViewById<TextView>(R.id.viopSignalScore).text = "Sinyal skoru: ${o?.finalScore?.let { "$it/100" } ?: "—"}"
-        findViewById<TextView>(R.id.viopSignalConfidence).text = "Veri güveni: ${o?.dataConfidenceScore?.let { "$it/100" } ?: "—"}"
-        findViewById<TextView>(R.id.viopSignalRisk).text = "Risk: ${o?.riskScore?.let { "$it/100" } ?: "—"}"
+        findViewById<TextView>(R.id.viopSignalScore).text = "Sinyal skoru: ${if (currentDataReady) o?.finalScore?.let { "$it/100" } ?: "—" else "—"}"
+        findViewById<TextView>(R.id.viopSignalConfidence).text = "Veri güveni: ${if (currentDataReady) o?.dataConfidenceScore?.let { "$it/100" } ?: "—" else "—"}"
+        findViewById<TextView>(R.id.viopSignalRisk).text = "Risk: ${if (currentDataReady) o?.riskScore?.let { "$it/100" } ?: "—" else "—"}"
         findViewById<TextView>(R.id.viopSignalReason).text = when {
+            !currentDataReady -> "VİOP veri servisi doğrulanamadı • gerçek VİOP LONG/SHORT sinyali gösterilmiyor."
             o == null && underlyingOpportunity != null -> "Dayanak analizi görüntüleniyor • doğrulanmış VİOP quote/history olmadan gerçek VİOP LONG/SHORT sinyali üretilmez."
             o == null -> "Quote ve strict history doğrulanmadan gerçek VİOP LONG/SHORT sinyali üretilmez."
             verifiedDirection == null -> "Karar durumu: ${o.decisionState} • ${o.signalReason}"

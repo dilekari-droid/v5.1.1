@@ -52,10 +52,10 @@ class TechnicalAnalysisActivity : BaseActivity() {
         val c = findViewById<LinearLayout>(R.id.indicatorContainer)
         c.removeAllViews()
 
-        if (x == null) {
+        if (x == null || !UiTruthPolicy.canShowOpportunity(x)) {
             sig.text = "VERİ YOK"
-            score.text = "Teknik analiz için bir hisse seçin."
-            findViewById<TextView>(R.id.multiTfStatus).text = "Çoklu zaman dilimi analizi için bir hisse seçin."
+            score.text = if (x == null) "Teknik analiz için bir hisse seçin." else "Piyasa verisi doğrulanamadığı için teknik sinyal gösterilmiyor."
+            findViewById<TextView>(R.id.multiTfStatus).text = if (x == null) "Çoklu zaman dilimi analizi için bir hisse seçin." else "Doğrulanmış veri yok • çoklu zaman dilimi analizi çalıştırılmadı."
             findViewById<TextView>(R.id.techAdviceLabel).text = "VERİ YOK"
             findViewById<TextView>(R.id.techAdviceDetail).text = "Teknik sinyal özeti üretilemedi."
             listOf(row3m(), row5m(), row1h(), row1d()).forEach { bindTrendRow(it, "", MultiTimeframeSignalAnalyzer.TrendResult(MultiTimeframeSignalAnalyzer.TrendDirection.INSUFFICIENT, null, null, 0)) }
@@ -139,7 +139,7 @@ class TechnicalAnalysisActivity : BaseActivity() {
                 adviceInvalidation.text = summary.invalidationSummary
                 adviceDetail.text = summary.explanation
             } catch (t: Throwable) {
-                status.text = "Çoklu zaman dilimi analizi alınamadı: ${t.message ?: "veri sağlayıcı hatası"}"
+                status.text = UiTruthPolicy.userMessage(t.message, "Çoklu zaman dilimi analizi için doğrulanmış veri alınamadı.")
                 listOf(row3m(), row5m(), row1h(), row1d()).forEach { row ->
                     bindTrendRow(row, rowLabel(row), MultiTimeframeSignalAnalyzer.TrendResult(MultiTimeframeSignalAnalyzer.TrendDirection.INSUFFICIENT, null, null, 0))
                 }
@@ -344,21 +344,21 @@ class TechnicalAnalysisActivity : BaseActivity() {
 
     private fun fmt(v: Double?) = v?.takeIf { it.isFinite() }?.let { "%.2f".format(it) } ?: "VERİ YOK"
     private fun stateRsi(v: Double?) = when {
-        v == null -> "YOK"
+        v == null -> "VERİ YOK"
         v < 30 -> "AL"
         v > 70 -> "SAT"
         else -> "NÖTR"
     }
 
     private fun statePair(a: Double?, b: Double?) = when {
-        a == null || b == null -> "YOK"
+        a == null || b == null -> "VERİ YOK"
         a > b -> "AL"
         a < b -> "SAT"
         else -> "NÖTR"
     }
 
     private fun statePrice(p: Double, v: Double?) = when {
-        v == null -> "YOK"
+        v == null -> "VERİ YOK"
         p > v -> "ÜSTÜ"
         p < v -> "ALTI"
         else -> "EŞİT"

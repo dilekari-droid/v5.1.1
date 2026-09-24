@@ -170,10 +170,10 @@ class SignalHistoryActivity : BaseActivity() {
             val lines = store.summaryLines(filter = filter)
             val filterInfo = "Filtre: ${direction ?: "TÜM YÖNLER"} • ${minScore?.let { "$it+" } ?: "TÜM PUANLAR"} • Gösterilen ${lines.size}/toplam ${overview.totalRecords} (ekran üst sınırı 200, saklama üst sınırı 3000)"
             status.text = when (overview.state) {
-                HistoryLoadState.NO_HISTORY -> "NO_HISTORY • Geçerli sinyal geçmişi yok.\n$filterInfo"
-                HistoryLoadState.PARTIAL_HISTORY -> "PARTIAL_HISTORY • Kısmi taramadan ${overview.totalRecords} geçerli sinyal kaydı mevcut.\n$filterInfo"
-                HistoryLoadState.COMPLETE_HISTORY -> "COMPLETE_HISTORY • ${overview.totalRecords} geçerli sinyal kaydı mevcut.\n$filterInfo"
-                HistoryLoadState.HISTORY_LOAD_ERROR -> "HISTORY_LOAD_ERROR • Sinyal geçmişi okunamadı."
+                HistoryLoadState.NO_HISTORY -> "Geçerli sinyal geçmişi yok.\n$filterInfo"
+                HistoryLoadState.PARTIAL_HISTORY -> "Kısmi taramadan ${overview.totalRecords} geçerli sinyal kaydı mevcut.\n$filterInfo"
+                HistoryLoadState.COMPLETE_HISTORY -> "${overview.totalRecords} geçerli sinyal kaydı mevcut.\n$filterInfo"
+                HistoryLoadState.HISTORY_LOAD_ERROR -> "Sinyal geçmişi okunamadı."
             }
             list.adapter = HistoryTextAdapter(
                 when {

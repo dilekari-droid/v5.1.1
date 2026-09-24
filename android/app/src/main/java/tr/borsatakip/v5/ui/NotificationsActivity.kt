@@ -77,7 +77,7 @@ class NotificationsActivity : BaseActivity() {
                 }
                 .onFailure { e ->
                     status.text = "TradingView webhook sinyalleri alınamadı"
-                    list.text = e.message ?: "Bilinmeyen bağlantı hatası"
+                    list.text = UiTruthPolicy.userMessage(e.message, "TradingView sinyalleri şu anda alınamıyor.")
                 }
         }
     }

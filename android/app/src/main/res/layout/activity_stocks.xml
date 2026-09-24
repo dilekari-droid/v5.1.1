@@ -124,13 +124,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
-                <Button android:id="@+id/stocksFilterAll" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:text="Tümü" />
-                <Button android:id="@+id/stocksFilterLong" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:layout_marginStart="5dp" android:text="LONG" />
-                <Button android:id="@+id/stocksFilterShort" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:layout_marginStart="5dp" android:text="SHORT" />
-                <Button android:id="@+id/stocksFilterBist30" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:layout_marginStart="5dp" android:text="BIST 30" />
-                <Button android:id="@+id/stocksFilterBank" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:layout_marginStart="5dp" android:text="Bankacılık" />
-                <Button android:id="@+id/stocksFilterIndustry" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:layout_marginStart="5dp" android:text="Sanayi" />
-                <Button android:id="@+id/stocksFilterTech" style="@style/ScanFilterButton" android:layout_height="42dp" android:minHeight="42dp" android:layout_marginStart="5dp" android:text="Teknoloji" />
+                <Button android:id="@+id/stocksFilterAll" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:text="Tümü" />
+                <Button android:id="@+id/stocksFilterLong" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="5dp" android:text="LONG" />
+                <Button android:id="@+id/stocksFilterShort" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="5dp" android:text="SHORT" />
+                <Button android:id="@+id/stocksFilterBist30" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="5dp" android:text="BIST 30" />
+                <Button android:id="@+id/stocksFilterBank" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="5dp" android:text="Bankacılık" />
+                <Button android:id="@+id/stocksFilterIndustry" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="5dp" android:text="Sanayi" />
+                <Button android:id="@+id/stocksFilterTech" style="@style/ScanFilterButton" android:layout_height="48dp" android:minHeight="48dp" android:layout_marginStart="5dp" android:text="Teknoloji" />
             </LinearLayout>
         </HorizontalScrollView>
 

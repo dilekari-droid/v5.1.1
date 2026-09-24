@@ -167,14 +167,16 @@ class MainActivity : BaseActivity() {
     }
 
     private fun refreshMarketSummary() {
-        val s = SettingsStore(this)
-        val label = s.lastProviderLabel.takeIf { it.isNotBlank() } ?: "Kaynak doğrulanmadı"
-        val timeText = if (s.lastProviderTimestamp > 0L) {
-            SimpleDateFormat("HH:mm:ss", trLocale).format(Date(s.lastProviderTimestamp))
+        val settings = SettingsStore(this)
+        val route = ProviderRouter.routingStatus()
+        val timeText = if (settings.lastProviderTimestamp > 0L) {
+            SimpleDateFormat("HH:mm:ss", trLocale).format(Date(settings.lastProviderTimestamp))
+        } else "—"
+        findViewById<TextView>(R.id.txtMarketSummary).text = if (UiTruthPolicy.providerHasDisplayableData(route)) {
+            "${UiTruthPolicy.providerLabel(route)} • Son doğrulama $timeText"
         } else {
-            "veri zamanı yok"
+            "Veri sağlayıcı doğrulanamadı • fiyat ve sinyaller doğrulanmadan gösterilmez • Son doğrulama $timeText"
         }
-        findViewById<TextView>(R.id.txtMarketSummary).text = "$label • $timeText • gecikme sonucu ilgili ekranda doğrulanır"
     }
 
     private fun marketTile(valueId: Int, changeId: Int, sparkId: Int) = TileViews(
@@ -245,28 +247,39 @@ class MainActivity : BaseActivity() {
                     marketTile(R.id.marketViopValue, R.id.marketViopChange, R.id.marketViopSpark),
                     viop30Deferred.await()
                 )
+                // Provider routing state is now known; re-project opportunities from the same truth gate.
+                renderTodayOpportunities()
             }
         }
     }
 
     private fun bindStockTile(tile: TileViews, stock: Stock?) {
-        if (stock == null) return
-        val price = stock.quotePrice ?: stock.candles.lastOrNull()?.close ?: return
-        val previous = stock.previousClose ?: stock.candles.dropLast(1).lastOrNull()?.close
-        val change = previous?.takeIf { it > 0.0 }?.let { ((price - it) / it) * 100.0 }
-        bindMarketTile(tile, price, change, stock.candles)
-    }
-
-    private fun bindQuoteTile(tile: TileViews, quote: tr.borsatakip.v5.model.ViopQuote?) {
-        if (quote == null) {
+        if (!UiTruthPolicy.canShowStock(stock)) {
             tile.value.text = "—"
-            tile.change.text = "Dayanak tara"
+            tile.change.text = "Veri yok"
             tile.change.setTextColor(getColor(R.color.text_muted))
-            tile.spark.text = "→"
+            tile.spark.text = "—"
             tile.spark.setTextColor(getColor(R.color.text_muted))
             return
         }
-        bindMarketTile(tile, quote.price, quote.dailyChangePct, emptyList())
+        val verified = requireNotNull(stock)
+        val price = verified.quotePrice ?: verified.candles.last().close
+        val previous = verified.previousClose ?: verified.candles.dropLast(1).lastOrNull()?.close
+        val change = previous?.takeIf { it > 0.0 }?.let { ((price - it) / it) * 100.0 }
+        bindMarketTile(tile, price, change, verified.candles)
+    }
+
+    private fun bindQuoteTile(tile: TileViews, quote: tr.borsatakip.v5.model.ViopQuote?) {
+        if (!UiTruthPolicy.canShowViopQuote(quote)) {
+            tile.value.text = "—"
+            tile.change.text = "Veri yok"
+            tile.change.setTextColor(getColor(R.color.text_muted))
+            tile.spark.text = "—"
+            tile.spark.setTextColor(getColor(R.color.text_muted))
+            return
+        }
+        val verified = requireNotNull(quote)
+        bindMarketTile(tile, verified.price, verified.dailyChangePct, emptyList())
     }
 
     private fun bindMarketTile(tile: TileViews, price: Double, changePct: Double?, candles: List<Candle>) {
@@ -293,19 +306,24 @@ class MainActivity : BaseActivity() {
         val container = findViewById<LinearLayout>(R.id.todayOpportunityRows)
         container.removeAllViews()
 
+        val route = ProviderRouter.routingStatus()
+        val providerUsable = UiTruthPolicy.providerHasDisplayableData(route)
+        val verifiedItems = if (providerUsable) AppSession.lastOpportunities.filter(UiTruthPolicy::canShowOpportunity) else emptyList()
         val filtered = when (todayMode) {
-            TodayMode.ALL -> AppSession.lastOpportunities
-            TodayMode.LONG -> AppSession.lastOpportunities.filter { it.direction.equals("LONG", true) }
-            TodayMode.SHORT -> AppSession.lastOpportunities.filter { it.direction.equals("SHORT", true) }
+            TodayMode.ALL -> verifiedItems
+            TodayMode.LONG -> verifiedItems.filter { OpportunityUiPolicy.directionLabel(it) == "LONG" }
+            TodayMode.SHORT -> verifiedItems.filter { OpportunityUiPolicy.directionLabel(it) == "SHORT" }
         }
         val top = filtered
             .sortedWith(compareByDescending<Opportunity> { it.rankingScore }.thenBy { it.riskScore })
             .take(8)
         if (top.isEmpty()) {
-            empty.text = when (todayMode) {
-                TodayMode.ALL -> "Henüz gerçek tarama yapılmadı."
-                TodayMode.LONG -> "Son taramada LONG yönlü hisse bulunmadı."
-                TodayMode.SHORT -> "Son taramada SHORT yönlü hisse bulunmadı."
+            empty.text = when {
+                !providerUsable -> "Veri sağlayıcı doğrulanamadı • fiyat ve fırsat sonuçları gösterilmiyor."
+                AppSession.lastOpportunities.isNotEmpty() && verifiedItems.isEmpty() -> "Kayıtlı sonuçlar var ancak veri durumu doğrulanamadı."
+                todayMode == TodayMode.ALL -> "Henüz doğrulanmış tarama sonucu yok."
+                todayMode == TodayMode.LONG -> "Son doğrulanmış taramada LONG yönlü hisse bulunmadı."
+                else -> "Son doğrulanmış taramada SHORT yönlü hisse bulunmadı."
             }
             empty.visibility = View.VISIBLE
             horizontal.visibility = View.GONE
