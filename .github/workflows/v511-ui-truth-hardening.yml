@@ -43,6 +43,8 @@ jobs:
             | base64 -d | gzip -d > /tmp/v511-ui.patch
           git apply --check /tmp/v511-ui.patch
           git apply /tmp/v511-ui.patch
+          git apply --check .github/tmp/v511-ui-compile-fix.patch
+          git apply .github/tmp/v511-ui-compile-fix.patch
           git diff --check
 
       - name: Source isolation and UI truth guards
@@ -110,7 +112,8 @@ jobs:
                  .github/tmp/v511-ui-truth-hardening.part0 \
                  .github/tmp/v511-ui-truth-hardening.part1 \
                  .github/tmp/v511-ui-truth-hardening.part2 \
-                 .github/tmp/v511-ui-truth-hardening.part3
+                 .github/tmp/v511-ui-truth-hardening.part3 \
+                 .github/tmp/v511-ui-compile-fix.patch
           git add -A
           git diff --cached --check
           git commit -m 'ui: enforce market-data truth and responsive states'
