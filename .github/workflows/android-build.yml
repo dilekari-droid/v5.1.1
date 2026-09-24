@@ -4,12 +4,6 @@ name: Android V5.4.16 Source Verification CI
 on:
   push:
     branches: [main, v5.4.16-report-completion, v5.4.16-full-hardening, v5.4.16-final-hardening-13]
-    paths:
-      - 'android/**'
-      - 'contracts/**'
-      - '.github/workflows/android-build.yml'
-      - '.github/workflows/backend-ci.yml'
-      - '.github/scripts/run-v5416-instrumentation.sh'
   pull_request:
     paths:
       - 'android/**'
@@ -57,6 +51,10 @@ jobs:
           set -euo pipefail
           grep -q 'versionName = "5.4.16"' android/app/build.gradle.kts
           grep -q 'versionCode = 556' android/app/build.gradle.kts
+          if grep -R -n -E 'V?5\.4\.1[0-5]' android backend contracts .github README.md --exclude-dir=build; then
+            echo 'obsolete pre-final version string found in final source' >&2
+            exit 1
+          fi
           grep -q 'ManualScanLifecycleInstrumentationTest' android/app/src/androidTest/java/tr/borsatakip/v5/worker/ManualScanLifecycleInstrumentationTest.kt
           python - <<'PY'
           from pathlib import Path
@@ -90,7 +88,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./android/gradlew -p android --no-daemon testDebugUnitTest compileDebugKotlin compileDebugAndroidTestKotlin
+          ./android/gradlew -p android --no-daemon testDebugUnitTest compileDebugKotlin compileDebugAndroidTestKotlin assembleDebug
 
   instrumentation-test:
     needs: source-test
