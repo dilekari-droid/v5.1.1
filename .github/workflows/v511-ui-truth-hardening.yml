@@ -54,7 +54,7 @@ jobs:
             exit 1
           fi
           test -f android/app/src/main/java/tr/borsatakip/v5/ui/UiTruthPolicy.kt
-          grep -q 'UiTruthPolicy.canShowOpportunity' android/app/src/main/java/tr/borsatakip/v5/ui/StocksActivity.kt
+          grep -q 'UiTruthPolicy::canShowOpportunity' android/app/src/main/java/tr/borsatakip/v5/ui/StocksActivity.kt
           grep -q 'UiTruthPolicy.canShowStock' android/app/src/main/java/tr/borsatakip/v5/ui/MainActivity.kt
           grep -q 'UiTruthPolicy.canShowViopQuote' android/app/src/main/java/tr/borsatakip/v5/ui/ViopActivity.kt
           grep -q 'VİOP LONG\\n—' android/app/src/main/res/layout/activity_viop.xml
