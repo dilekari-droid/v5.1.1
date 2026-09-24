@@ -1,17 +1,22 @@
-name: V5.1.1 Close Open Items Apply
+name: V5.1.1 Close Open Items Verify
 
 on:
   push:
     branches: [hardening/v511-close-open-items]
     paths:
-      - '.github/tmp/v511-close-open.patch.gz.b64'
       - '.github/workflows/v511-close-open-items-apply.yml'
+      - '.github/workflows/android-build.yml'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/production-e2e.yml'
+      - 'android/**'
+      - 'backend/**'
+      - 'contracts/**'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  verify-and-commit:
+  verify-source:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout isolated hardening branch
@@ -26,14 +31,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Apply close-open patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 -d .github/tmp/v511-close-open.patch.gz.b64 | gzip -d > /tmp/v511-close-open.patch
-          patch -p4 --dry-run < /tmp/v511-close-open.patch
-          patch -p4 < /tmp/v511-close-open.patch
-          git diff --check
       - name: Source hygiene and V5 isolation gates
         shell: bash
         run: |
@@ -54,7 +51,7 @@ jobs:
           hits=[]
           for root in roots:
               for path in root.rglob('*'):
-                  if not path.is_file() or path.name == 'v511-close-open.patch.gz.b64':
+                  if not path.is_file():
                       continue
                   try: text=path.read_text(encoding='utf-8')
                   except (UnicodeDecodeError,OSError): continue
@@ -86,15 +83,3 @@ jobs:
         run: |
           set -euo pipefail
           ./android/gradlew -p android --no-daemon testDebugUnitTest compileDebugKotlin compileDebugAndroidTestKotlin assembleDebug
-      - name: Commit exact verified source changes
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f .github/tmp/v511-close-open.patch.gz.b64 .github/workflows/v511-close-open-items-apply.yml
-          rmdir .github/tmp 2>/dev/null || true
-          git add -A
-          git diff --cached --check
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'hardening: close source and final-SHA acceptance gaps'
-          git push origin HEAD:hardening/v511-close-open-items
