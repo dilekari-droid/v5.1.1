@@ -681,15 +681,18 @@ class ViopActivity : BaseActivity() {
         val shorts = source.count { ViopSignalPolicy.analysisBias(it.underlying) == ViopSignalPolicy.AnalysisBias.SHORT }
         val neutral = source.size - longs - shorts
         val average = source.map { it.underlying.rankingScore.toDouble() }.takeIf { it.isNotEmpty() }?.average()
-        findViewById<TextView>(R.id.summaryLong).text = "LONG EĞİLİMİ\n$longs"
-        findViewById<TextView>(R.id.summaryShort).text = "SHORT EĞİLİMİ\n$shorts"
-        findViewById<TextView>(R.id.summaryWatch).text = "NÖTR\n$neutral"
-        findViewById<TextView>(R.id.summaryTotal).text = "TARANAN DAYANAK\n${source.size}"
+        // Dayanak ön taraması gerçek VİOP kontrat/sinyal sonucu değildir.
+        // Provider doğrulanmadan ana VİOP sayaçlarında sayısal sonuç göstermeyiz.
+        findViewById<TextView>(R.id.summaryLong).text = "VİOP LONG\n—"
+        findViewById<TextView>(R.id.summaryShort).text = "VİOP SHORT\n—"
+        findViewById<TextView>(R.id.summaryWatch).text = "İZLE\n—"
+        findViewById<TextView>(R.id.summaryTotal).text = "TARANAN\n—"
         findViewById<Button>(R.id.filterLong).text = "LONG ($longs)"
         findViewById<Button>(R.id.filterShort).text = "SHORT ($shorts)"
         findViewById<Button>(R.id.filterWatch).text = "NÖTR ($neutral)"
         findViewById<TextView>(R.id.signalSummary).text = buildString {
-            append("${source.size} dayanak • DAYANAK ÖN TARAMA")
+            append("DAYANAK ÖN TARAMA • gerçek VİOP sinyali değildir")
+            append("\n${source.size} dayanak: LONG eğilimi $longs • SHORT eğilimi $shorts • Nötr $neutral")
             average?.let { append(" • Ortalama sıralama %${it.toInt().coerceIn(0, 100)}") }
         }
         val marketTs = source.maxOfOrNull { it.underlying.dataTimestamp } ?: 0L
