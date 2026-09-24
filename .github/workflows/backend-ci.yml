@@ -3,11 +3,6 @@ name: Production Backend V5.4.16 CI
 on:
   push:
     branches: [main, v5.4.16-report-completion, v5.4.16-full-hardening, v5.4.16-final-hardening-13]
-    paths:
-      - 'backend/**'
-      - 'contracts/**'
-      - '.github/workflows/backend-ci.yml'
-      - '.github/workflows/android-build.yml'
   pull_request:
     paths:
       - 'backend/**'
